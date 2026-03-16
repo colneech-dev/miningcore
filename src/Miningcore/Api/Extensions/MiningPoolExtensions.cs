@@ -20,7 +20,7 @@ public static class MiningPoolExtensions
         var poolInfo = mapper.Map<PoolInfo>(poolConfig);
 
         poolInfo.PoolStats = mapper.Map<PoolStats>(stats);
-        poolInfo.NetworkStats = pool?.NetworkStats ?? mapper.Map<BlockchainStats>(stats);
+        poolInfo.NetworkStats = pool?.NetworkStats ?? (stats != null ? mapper.Map<BlockchainStats>(stats) : new BlockchainStats());
 
         // pool wallet link
         var addressInfobaseUrl = poolConfig.Template.ExplorerAccountLink;
