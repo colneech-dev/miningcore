@@ -30,7 +30,7 @@ RUN dotnet publish -c Release --framework net8.0
 # -------------------------
 # Runtime stage
 # -------------------------
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:8.0-noble AS runtime
 WORKDIR /app
 COPY --from=build /app/src/Miningcore/bin/Release/net8.0 .
 # Install runtime dependencies
