@@ -34,5 +34,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0-noble AS runtime
 WORKDIR /app
 COPY --from=build /app/src/Miningcore/bin/Release/net8.0 .
 # Install runtime dependencies
-RUN apt-get update && apt-get install -y libsodium23 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y libsodium23 libzmq5 && \
+    ln -s /usr/lib/x86_64-linux-gnu/libzmq.so.5 /usr/lib/x86_64-linux-gnu/libzmq.so && \
+    rm -rf /var/lib/apt/lists/*
 ENTRYPOINT ["./Miningcore", "-c", "/config/config.json"]

@@ -118,6 +118,11 @@ public class StatsRecorder : BackgroundService
             {
                 // pool miners
                 pool.PoolStats.ConnectedMiners = byMiner.Length; // update connected miners
+                pool.PoolStats.ConnectedWorkers = result
+                    .Where(x => !string.IsNullOrEmpty(x.Worker))
+                    .Select(x => x.Miner + "." + x.Worker)
+                    .Distinct()
+                    .Count(); // update connected workers
 
                 // Stats calc windows
                 var timeFrameBeforeFirstShare = ((result.Min(x => x.FirstShare) - timeFrom).TotalSeconds);
@@ -143,6 +148,7 @@ public class StatsRecorder : BackgroundService
             {
                 // reset
                 pool.PoolStats.ConnectedMiners = 0;
+                pool.PoolStats.ConnectedWorkers = 0;
                 pool.PoolStats.PoolHashrate = 0;
                 pool.PoolStats.SharesPerSecond = 0;
 
