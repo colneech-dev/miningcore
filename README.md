@@ -4,6 +4,17 @@
 
 <img src="https://github.com/blackmennewstyle/miningcore/raw/master/logo.png" width="150">
 
+## Colneech Customisations
+
+This fork adds the following changes on top of upstream:
+
+- **`connectedWorkers` in pool stats API** — the `/api/pools` response now includes a `connectedWorkers` count per pool, calculated from distinct `WALLET.WORKER` combinations in the share window
+- **`worker` field in blocks API** — the `/api/pools/{id}/blocks` response now includes the `worker` name that found each block; stored at block submission time
+- Database migration: `ALTER TABLE poolstats ADD COLUMN connectedworkers integer NOT NULL DEFAULT 0;`
+- Database migration: `ALTER TABLE blocks ADD COLUMN worker text;` (column already existed in schema but was not populated)
+
+---
+
 ### Features
 
 - Supports clusters of pools each running individual currencies
