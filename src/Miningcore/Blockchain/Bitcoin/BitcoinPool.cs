@@ -369,8 +369,14 @@ public class BitcoinPool : PoolBase
         if(extensionParams.TryGetValue(BitcoinStratumExtensions.VersionRollingMask, out var requestedMaskValue))
             requestedMask = uint.Parse(requestedMaskValue.Value<string>(), NumberStyles.HexNumber);
 
+        // Allow per-pool mask override (e.g. to protect reserved version bits)
+        var extra = poolConfig.Extra.SafeExtensionDataAs<Configuration.BitcoinPoolConfigExtra>();
+        var poolMask = BitcoinConstants.VersionRollingPoolMask;
+        if(!string.IsNullOrEmpty(extra?.VersionRollingMask))
+            poolMask = uint.Parse(extra.VersionRollingMask, System.Globalization.NumberStyles.HexNumber);
+
         // Compute effective mask
-        context.VersionRollingMask = BitcoinConstants.VersionRollingPoolMask & requestedMask;
+        context.VersionRollingMask = poolMask & requestedMask;
 
         // enabled
         result[BitcoinStratumExtensions.VersionRolling] = true;

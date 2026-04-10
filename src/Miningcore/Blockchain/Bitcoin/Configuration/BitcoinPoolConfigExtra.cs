@@ -40,4 +40,11 @@ public class BitcoinPoolConfigExtra
     /// Custom Arguments for getblocktemplate RPC
     /// </summary>
     public JToken GBTArgs { get; set; }
+
+    /// <summary>
+    /// Override the version-rolling mask negotiated with miners (hex string, e.g. "1ffce000").
+    /// Use to exclude version bits reserved by the coin (e.g. LCC uses bit 16 for PoW type).
+    /// Defaults to BitcoinConstants.VersionRollingPoolMask (0x1fffe000).
+    /// </summary>
+    public string VersionRollingMask { get; set; }
 }

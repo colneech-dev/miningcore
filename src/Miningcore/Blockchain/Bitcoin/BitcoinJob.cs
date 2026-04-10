@@ -1126,8 +1126,9 @@ public class BitcoinJob
             versionBitsInt = uint.Parse(versionBits, NumberStyles.HexNumber);
 
             // enforce that only bits covered by current mask are changed by miner
-            if((versionBitsInt & ~context.VersionRollingMask.Value) != 0)
-                throw new StratumException(StratumError.Other, "rolling-version mask violation");
+            // Clamp version bits to the negotiated mask rather than rejecting outright.
+            // Some firmware (e.g. NerdOctAxe) rolls bits outside the negotiated mask.
+            versionBitsInt &= context.VersionRollingMask.Value;
         }
 
         // dupe check
