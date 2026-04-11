@@ -62,4 +62,11 @@ public class BitcoinPoolConfigExtra
     /// Use for coins that encode PoW type in nVersion (e.g. LCC uses bit 16: 00010000).
     /// </summary>
     public string VersionBlockedBits { get; set; }
+
+    /// <summary>
+    /// Optional list of auxiliary chains to merge-mine alongside this pool.
+    /// Each entry specifies a chain daemon (e.g. Namecoin) whose blocks will
+    /// be committed in this pool's coinbase and submitted when difficulty is met.
+    /// </summary>
+    public AuxPoW.AuxChainConfig[] AuxChains { get; set; }
 }
