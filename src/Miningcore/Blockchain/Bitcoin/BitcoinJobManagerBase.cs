@@ -15,6 +15,7 @@ using Miningcore.Time;
 using NBitcoin;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using Miningcore.Blockchain.Bitcoin.AuxPoW;
 using static Miningcore.Util.ActionUtils;
 
 namespace Miningcore.Blockchain.Bitcoin;
@@ -44,6 +45,7 @@ public abstract class BitcoinJobManagerBase<TJob> : JobManagerBase<TJob>
     public int maxActiveJobs { get; protected set; } = 4;
     protected bool hasLegacyDaemon;
     protected BitcoinPoolConfigExtra extraPoolConfig;
+    protected List<AuxPowManager> auxPowManagers = new();
     protected BitcoinPoolPaymentProcessingConfigExtra extraPoolPaymentProcessingConfig;
     protected DateTime? lastJobRebroadcast;
     protected bool hasSubmitBlockMethod;
@@ -376,6 +378,18 @@ public abstract class BitcoinJobManagerBase<TJob> : JobManagerBase<TJob>
         var jsonSerializerSettings = ctx.Resolve<JsonSerializerSettings>();
 
         rpc = new RpcClient(poolConfig.Daemons.First(), jsonSerializerSettings, messageBus, poolConfig.Id);
+
+        // Initialize aux chain managers for merge mining
+        var auxExtra = poolConfig.Extra.SafeExtensionDataAs<BitcoinPoolConfigExtra>();
+        if(auxExtra?.AuxChains?.Length > 0)
+        {
+            foreach(var auxChain in auxExtra.AuxChains)
+            {
+                var manager = new AuxPowManager(auxChain, jsonSerializerSettings, messageBus);
+                auxPowManagers.Add(manager);
+                logger.Info(() => "Aux merge mining configured for " + auxChain.Name + " (chainId=" + auxChain.ChainId + ")");
+            }
+        }
     }
 
     protected override async Task<bool> AreDaemonsHealthyAsync(CancellationToken ct)

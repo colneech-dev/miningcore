@@ -1,3 +1,4 @@
+using Miningcore.Blockchain.Bitcoin.AuxPoW;
 using ProtoBuf;
 
 namespace Miningcore.Blockchain;
@@ -101,4 +102,11 @@ public class Share
     /// </summary>
     [ProtoMember(15)]
     public DateTime Created { get; set; }
+
+    /// <summary>
+    /// Runtime-only: aux chain block candidates found alongside this share (not persisted).
+    /// Populated by BitcoinJob.ProcessShare when a share meets an aux chain target.
+    /// </summary>
+    [ProtoIgnore]
+    public List<(AuxBlockData AuxBlock, byte[] HeaderBytes, byte[] Coinbase)> AuxCandidates { get; set; }
 }

@@ -16,6 +16,8 @@ using Newtonsoft.Json.Linq;
 using NLog;
 using Org.BouncyCastle.Crypto.Parameters;
 
+using Miningcore.Blockchain.Bitcoin.AuxPoW;
+
 namespace Miningcore.Blockchain.Bitcoin;
 
 public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
@@ -160,10 +162,23 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
             {
                 job = CreateJob();
 
+                // Refresh aux blocks for merge mining before creating the job
+                // (so the coinbase commitment uses the latest aux block hash)
+                AuxBlockData[] currentAuxBlocks = null;
+                if(auxPowManagers.Count > 0)
+                {
+                    await Task.WhenAll(auxPowManagers.Select(m => m.RefreshAsync(ct)));
+                    currentAuxBlocks = auxPowManagers
+                        .Select(m => m.CurrentAuxBlock)
+                        .Where(b => b != null)
+                        .ToArray();
+                }
+
                 job.Init(blockTemplate, NextJobId(),
                     poolConfig, extraPoolConfig, clusterConfig, clock, poolAddressDestination, network, isPoS,
                     ShareMultiplier, coin.CoinbaseHasherValue, coin.HeaderHasherValue,
-                    !isPoS ? coin.BlockHasherValue : coin.PoSBlockHasherValue ?? coin.BlockHasherValue);
+                    !isPoS ? coin.BlockHasherValue : coin.PoSBlockHasherValue ?? coin.BlockHasherValue,
+                    currentAuxBlocks);
 
                 if(isNew)
                 {
@@ -324,6 +339,32 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                 // clear fields that no longer apply
                 share.TransactionConfirmationData = null;
             }
+        }
+
+        // Submit to any aux chains (merged mining) if this share met their targets
+        if(share.AuxCandidates?.Count > 0 && auxPowManagers.Count > 0)
+        {
+            foreach(var (auxBlock, headerBytes, coinbase) in share.AuxCandidates)
+            {
+                var manager = auxPowManagers.FirstOrDefault(m => m.CurrentAuxBlock?.Hash == auxBlock.Hash);
+                if(manager == null) continue;
+
+                logger.Info(() => "Submitting merged block to " + manager.Config.Name);
+
+                // Build merkle branch: coinbase is first tx, so branch from merkle tree
+                // For simplicity with a single coinbase, branch is empty if only one tx
+                var coinbaseTxHex = coinbase.ToHexString();
+                var auxPoWHex = AuxPowSerializer.BuildAuxPoWHex(coinbaseTxHex, headerBytes, new List<byte[]>());
+
+                await manager.SubmitAuxBlockAsync(auxBlock.Hash, auxPoWHex, ct);
+            }
+        }
+
+        // Refresh aux blocks on every share (rate-limited internally)
+        if(auxPowManagers.Count > 0)
+        {
+            foreach(var manager in auxPowManagers)
+                _ = manager.RefreshAsync(ct);
         }
 
         return share;
