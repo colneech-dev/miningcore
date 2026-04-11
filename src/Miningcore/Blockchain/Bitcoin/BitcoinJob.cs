@@ -34,6 +34,7 @@ public class BitcoinJob
     protected Network network;
     protected IDestination poolAddressDestination;
     protected BitcoinTemplate coin;
+    protected BitcoinPoolConfigExtra extraPoolConfig;
     private BitcoinTemplate.BitcoinNetworkParams networkParams;
     protected readonly ConcurrentDictionary<string, bool> submissions = new(StringComparer.OrdinalIgnoreCase);
     protected uint256 blockTargetValue;
@@ -979,6 +980,7 @@ public class BitcoinJob
         Contract.Requires<ArgumentException>(!string.IsNullOrEmpty(jobId));
 
         coin = pc.Template.As<BitcoinTemplate>();
+        this.extraPoolConfig = extraPoolConfig;
         networkParams = coin.GetNetwork(network.ChainName);
         txVersion = coin.CoinbaseTxVersion;
         this.network = network;
@@ -1134,7 +1136,22 @@ public class BitcoinJob
         if(!RegisterSubmit(context.ExtraNonce1, extraNonce2, nTime, nonce))
             throw new StratumException(StratumError.DuplicateShare, "duplicate share");
 
-        return ProcessShareInternal(worker, extraNonce2, nTimeInt, nonceInt, versionBitsInt);
+        var (share, blockHex) = ProcessShareInternal(worker, extraNonce2, nTimeInt, nonceInt, versionBitsInt);
+
+        // If the coin reserves nVersion bits for PoW type selection (e.g. LCC bit 16),
+        // suppress block submission when those bits are set in the miner-submitted nVersion.
+        // The share is still counted for difficulty; we just don't submit an invalid block.
+        if(share.IsBlockCandidate && blockHex != null && extraPoolConfig?.VersionBlockedBits != null && versionBitsInt != 0)
+        {
+            var blockedMask = uint.Parse(extraPoolConfig.VersionBlockedBits, System.Globalization.NumberStyles.HexNumber);
+            if((versionBitsInt & blockedMask) != 0)
+            {
+                share.IsBlockCandidate = false;
+                blockHex = null;
+            }
+        }
+
+        return (share, blockHex);
     }
 
     #endregion // API-Surface
