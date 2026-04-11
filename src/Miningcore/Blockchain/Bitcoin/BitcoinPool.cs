@@ -329,6 +329,8 @@ public class BitcoinPool : PoolBase
         var extensionParams = requestParams[1].ToObject<Dictionary<string, JToken>>();
         var result = new Dictionary<string, object>();
 
+        var extra = poolConfig.Extra.SafeExtensionDataAs<Configuration.BitcoinPoolConfigExtra>();
+
         if(extensions != null)
         {
             foreach(var extension in extensions)
@@ -336,7 +338,8 @@ public class BitcoinPool : PoolBase
                 switch(extension)
                 {
                     case BitcoinStratumExtensions.VersionRolling:
-                        ConfigureVersionRolling(connection, context, extensionParams, result);
+                        if(extra?.EnableVersionRolling != false)
+                            ConfigureVersionRolling(connection, context, extensionParams, result);
                         break;
 
                     case BitcoinStratumExtensions.MinimumDiff:
