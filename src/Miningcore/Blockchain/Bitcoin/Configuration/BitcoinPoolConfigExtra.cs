@@ -47,4 +47,11 @@ public class BitcoinPoolConfigExtra
     /// Defaults to BitcoinConstants.VersionRollingPoolMask (0x1fffe000).
     /// </summary>
     public string VersionRollingMask { get; set; }
+
+    /// <summary>
+    /// Set to false to refuse version-rolling negotiation with miners.
+    /// Use for coins that encode PoW type in nVersion bits covered by the rolling mask (e.g. LCC bit 16).
+    /// Defaults to true (version rolling enabled).
+    /// </summary>
+    public bool EnableVersionRolling { get; set; } = true;
 }
