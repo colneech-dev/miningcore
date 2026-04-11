@@ -14,6 +14,7 @@ using NBitcoin;
 using NBitcoin.DataEncoders;
 using Newtonsoft.Json.Linq;
 using Contract = Miningcore.Contracts.Contract;
+using NLog;
 using Transaction = NBitcoin.Transaction;
 using System.Numerics;
 
@@ -21,6 +22,7 @@ namespace Miningcore.Blockchain.Bitcoin;
 
 public class BitcoinJob
 {
+    private static readonly ILogger logger = LogManager.GetCurrentClassLogger();
     protected IHashAlgorithm blockHasher;
     protected IMasterClock clock;
     protected IHashAlgorithm coinbaseHasher;
@@ -1148,6 +1150,7 @@ public class BitcoinJob
             {
                 share.IsBlockCandidate = false;
                 blockHex = null;
+                logger.Info(() => "[" + worker.ConnectionId + "] Block candidate suppressed: miner nVersion=0x" + versionBitsInt.ToString("X8") + " has blocked bits " + extraPoolConfig.VersionBlockedBits + " set - not submitting to daemon");
             }
         }
 
