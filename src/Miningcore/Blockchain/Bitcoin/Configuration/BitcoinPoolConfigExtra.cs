@@ -54,4 +54,12 @@ public class BitcoinPoolConfigExtra
     /// Defaults to true (version rolling enabled).
     /// </summary>
     public bool EnableVersionRolling { get; set; } = true;
+
+    /// <summary>
+    /// Hex mask of nVersion bits that must be zero for a share to be submitted as a block candidate.
+    /// If any of these bits are set in the submitted nVersion, the share is accepted for difficulty
+    /// purposes but not submitted to the daemon.
+    /// Use for coins that encode PoW type in nVersion (e.g. LCC uses bit 16: 00010000).
+    /// </summary>
+    public string VersionBlockedBits { get; set; }
 }
