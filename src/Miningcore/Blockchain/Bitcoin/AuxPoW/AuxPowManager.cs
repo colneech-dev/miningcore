@@ -5,6 +5,7 @@ using Miningcore.Messaging;
 using Miningcore.Rpc;
 using NBitcoin;
 using Newtonsoft.Json;
+using Miningcore.Extensions;
 using Newtonsoft.Json.Linq;
 using NLog;
 

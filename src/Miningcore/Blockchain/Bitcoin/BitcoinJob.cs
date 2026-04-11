@@ -13,6 +13,7 @@ using Miningcore.Util;
 using NBitcoin;
 using NBitcoin.DataEncoders;
 using Newtonsoft.Json.Linq;
+using Miningcore.Blockchain.Bitcoin.AuxPoW;
 using Contract = Miningcore.Contracts.Contract;
 using NLog;
 using Transaction = NBitcoin.Transaction;
@@ -37,6 +38,7 @@ public class BitcoinJob
     protected IDestination poolAddressDestination;
     protected BitcoinTemplate coin;
     protected BitcoinPoolConfigExtra extraPoolConfig;
+    protected AuxBlockData[] auxBlocks;  // current aux chain work for merge mining
     private BitcoinTemplate.BitcoinNetworkParams networkParams;
     protected readonly ConcurrentDictionary<string, bool> submissions = new(StringComparer.OrdinalIgnoreCase);
     protected uint256 blockTargetValue;
@@ -318,6 +320,20 @@ public class BitcoinJob
         // push placeholder
         ops.Add(Op.GetPushOp(0));
 
+        // Embed aux chain commitments for merge mining (AuxPoW)
+        // Format per aux chain: 0xfabe6d6d + auxHash(32,LE) + merkleSize(4,LE) + nonce(4,LE)
+        if(auxBlocks != null)
+        {
+            foreach(var aux in auxBlocks)
+            {
+                if(!string.IsNullOrEmpty(aux?.Hash))
+                {
+                    var commitment = AuxPowSerializer.BuildCoinbaseCommitment(aux.Hash);
+                    ops.Add(Op.GetPushOp(commitment));
+                }
+            }
+        }
+
         return new Script(ops);
     }
 
@@ -426,7 +442,7 @@ public class BitcoinJob
             return blockHeader.ToBytes();
     }
 
-    protected virtual (Share Share, string BlockHex) ProcessShareInternal(
+    protected virtual (Share Share, string BlockHex, List<(AuxBlockData AuxBlock, byte[] HeaderBytes, byte[] Coinbase)> AuxCandidates) ProcessShareInternal(
         StratumConnection worker, string extraNonce2, uint nTime, uint nonce, uint? versionBits)
     {
         var context = worker.ContextAs<BitcoinWorkerContext>();
@@ -478,6 +494,21 @@ public class BitcoinJob
             Difficulty = stratumDifficulty / shareMultiplier,
         };
 
+        // Check aux chain targets for merged mining
+        List<(AuxBlockData AuxBlock, byte[] HeaderBytes, byte[] Coinbase)> auxCandidates = null;
+        if(auxBlocks != null)
+        {
+            foreach(var aux in auxBlocks)
+            {
+                if(aux?.TargetValue != null && headerValue <= aux.TargetValue)
+                {
+                    auxCandidates ??= new();
+                    auxCandidates.Add((aux, headerBytes.ToArray(), coinbase));
+                    logger.Info(() => "[" + worker.ConnectionId + "] Merged mining candidate: meets aux target for " + (aux.Hash.Length > 16 ? aux.Hash[..16] : aux.Hash) + "...");
+                }
+            }
+        }
+
         if(isBlockCandidate)
         {
             result.IsBlockCandidate = true;
@@ -489,10 +520,10 @@ public class BitcoinJob
             var blockBytes = SerializeBlock(headerBytes, coinbase);
             var blockHex = blockBytes.ToHexString();
 
-            return (result, blockHex);
+            return (result, blockHex, auxCandidates);
         }
 
-        return (result, null);
+        return (result, null, auxCandidates);
     }
 
     protected virtual byte[] SerializeCoinbase(string extraNonce1, string extraNonce2)
@@ -969,7 +1000,8 @@ public class BitcoinJob
         ClusterConfig cc, IMasterClock clock,
         IDestination poolAddressDestination, Network network,
         bool isPoS, double shareMultiplier, IHashAlgorithm coinbaseHasher,
-        IHashAlgorithm headerHasher, IHashAlgorithm blockHasher)
+        IHashAlgorithm headerHasher, IHashAlgorithm blockHasher,
+        AuxBlockData[] auxBlocks = null)
     {
         Contract.RequiresNonNull(blockTemplate);
         Contract.RequiresNonNull(pc);
@@ -983,6 +1015,7 @@ public class BitcoinJob
 
         coin = pc.Template.As<BitcoinTemplate>();
         this.extraPoolConfig = extraPoolConfig;
+        this.auxBlocks = auxBlocks;
         networkParams = coin.GetNetwork(network.ChainName);
         txVersion = coin.CoinbaseTxVersion;
         this.network = network;
@@ -1138,7 +1171,8 @@ public class BitcoinJob
         if(!RegisterSubmit(context.ExtraNonce1, extraNonce2, nTime, nonce))
             throw new StratumException(StratumError.DuplicateShare, "duplicate share");
 
-        var (share, blockHex) = ProcessShareInternal(worker, extraNonce2, nTimeInt, nonceInt, versionBitsInt);
+        var (share, blockHex, auxCandidates) = ProcessShareInternal(worker, extraNonce2, nTimeInt, nonceInt, versionBitsInt);
+        share.AuxCandidates = auxCandidates;
 
         // If the coin reserves nVersion bits for PoW type selection (e.g. LCC bit 16),
         // suppress block submission when those bits are set in the miner-submitted nVersion.
