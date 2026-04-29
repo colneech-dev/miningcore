@@ -117,7 +117,7 @@ public class BitcoinJob
         string hexString = ByteArrayToHexString(txBytes);
 
         // Parse the transaction using NBitcoin
-        var transaction = Transaction.Parse(hexString, Network.Main);
+        var transaction = Transaction.Parse(hexString, network);
 
         return transaction.HasWitness;
     }
@@ -252,8 +252,10 @@ public class BitcoinJob
                 if (coin.Symbol == "RVH" || coin.Symbol == "ANOK")
                 {
                     // Compute witness commitment
-                    raw = BlockTemplate.DefaultWitnessCommitment.HexToByteArray();
-                    byte[] witnessRoot = raw;
+                    // DefaultWitnessCommitment is a 38-byte script: OP_RETURN(1) + push36(1) + magic(4) + witnessRootHash(32)
+                    // Extract the 32-byte witness root hash starting at byte offset 6
+                    var commitmentScript = BlockTemplate.DefaultWitnessCommitment.HexToByteArray();
+                    byte[] witnessRoot = commitmentScript.Skip(6).Take(32).ToArray();
                     byte[] witnessNonce = new byte[32];
 
                     // Build Merkle Tree
@@ -786,9 +788,8 @@ public class BitcoinJob
         {
             var payeeAddress = BitcoinUtils.AddressToDestination(minerFundParameters.Addresses[0], network);
             tx.Outputs.Add(payeeReward, payeeAddress);
+            reward -= payeeReward;
         }
-
-        reward -= payeeReward;
 
         return reward;
     }
@@ -801,9 +802,10 @@ public class BitcoinJob
     {
         if(BlockTemplate.CommunityAutonomousValue > 0)
         {
-            var payeeReward = BlockTemplate.CommunityAutonomousValue;
+            var payeeReward = new Money(BlockTemplate.CommunityAutonomousValue, MoneyUnit.Satoshi);
             var payeeAddress = BitcoinUtils.AddressToDestination(BlockTemplate.CommunityAutonomousAddress, network);
             tx.Outputs.Add(payeeReward, payeeAddress);
+            reward -= payeeReward;
         }
         return reward;
     }
@@ -827,6 +829,7 @@ public class BitcoinJob
                     Script payeeAddress = new Script(CBReward.ScriptPubkey.HexToByteArray());
                     var payeeReward = CBReward.Value;
                     tx.Outputs.Add(payeeReward, payeeAddress);
+                    reward -= payeeReward;
                 }
             }
         }
@@ -912,7 +915,7 @@ public class BitcoinJob
                         var payeeReward = DataMining.Amount;
 
                         tx.Outputs.Add(payeeReward, payeeAddress);
-                        //reward -= payeeReward;
+                        reward -= payeeReward;
                     }
                 }
             }
@@ -1011,8 +1014,10 @@ public class BitcoinJob
 
     public BlockTemplate BlockTemplate { get; protected set; }
     public double Difficulty { get; protected set; }
-
     public string JobId { get; protected set; }
+
+    public List<byte[]> MerkleBranchSteps => mt?.Steps?.ToList() ?? new List<byte[]>();
+    public AuxBlockData[] AuxBlocks => auxBlocks;
 
     public void Init(BlockTemplate blockTemplate, string jobId,
         PoolConfig pc, BitcoinPoolConfigExtra extraPoolConfig,

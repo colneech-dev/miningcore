@@ -18,7 +18,7 @@ using Contract = Miningcore.Contracts.Contract;
 using Transaction = NBitcoin.Transaction;
 using System.Numerics;
 
-namespace Miningcore.Blockchain.Bitcoin.Custom.AdventurecoinJob;
+namespace Miningcore.Blockchain.Bitcoin.Custom;
 
 public class AdventurecoinJob : BitcoinJob
 {
@@ -45,6 +45,7 @@ public class AdventurecoinJob : BitcoinJob
                         var payeeReward = Developer.Amount;
 
                         tx.Outputs.Add(payeeReward, payeeAddress);
+                        reward -= payeeReward;
                     }
                 }
             }

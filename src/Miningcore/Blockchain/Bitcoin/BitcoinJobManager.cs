@@ -1,7 +1,7 @@
 using Autofac;
 using Miningcore.Blockchain.Bitcoin.Configuration;
 using Miningcore.Blockchain.Bitcoin.DaemonResponses;
-using Miningcore.Blockchain.Bitcoin.Custom.AdventurecoinJob;
+using Miningcore.Blockchain.Bitcoin.Custom;
 using Miningcore.Configuration;
 using Miningcore.Contracts;
 using Miningcore.Crypto;
@@ -14,7 +14,7 @@ using Miningcore.Time;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NLog;
-using Org.BouncyCastle.Crypto.Parameters;
+using System.Collections.Concurrent;
 
 using Miningcore.Blockchain.Bitcoin.AuxPoW;
 
@@ -32,6 +32,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
     }
 
     private BitcoinTemplate coin;
+    private readonly ConcurrentDictionary<string, byte> submittedAuxHashes = new(StringComparer.OrdinalIgnoreCase);
 
     protected override object[] GetBlockTemplateParams()
     {
@@ -158,21 +159,32 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
             if(isNew)
                 messageBus.NotifyChainHeight(poolConfig.Id, blockTemplate.Height, poolConfig.Template);
 
+            // Always refresh aux blocks — detect changes even when the primary chain is unchanged
+            AuxBlockData[] currentAuxBlocks = null;
+            if(auxPowManagers.Count > 0)
+            {
+                await Task.WhenAll(auxPowManagers.Select(m => m.RefreshAsync(ct)));
+                currentAuxBlocks = auxPowManagers
+                    .Select(m => m.CurrentAuxBlock)
+                    .Where(b => b != null)
+                    .ToArray();
+
+                // If any aux block hash changed, rebuild the job so the coinbase commitment is fresh
+                if(!isNew && !forceUpdate && job != null)
+                {
+                    var prevHashes = job.AuxBlocks?.Select(b => b.Hash)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase)
+                        ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    var newHashes = currentAuxBlocks.Select(b => b.Hash)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    if(!prevHashes.SetEquals(newHashes))
+                        isNew = true;
+                }
+            }
+
             if(isNew || forceUpdate)
             {
                 job = CreateJob();
-
-                // Refresh aux blocks for merge mining before creating the job
-                // (so the coinbase commitment uses the latest aux block hash)
-                AuxBlockData[] currentAuxBlocks = null;
-                if(auxPowManagers.Count > 0)
-                {
-                    await Task.WhenAll(auxPowManagers.Select(m => m.RefreshAsync(ct)));
-                    currentAuxBlocks = auxPowManagers
-                        .Select(m => m.CurrentAuxBlock)
-                        .Where(b => b != null)
-                        .ToArray();
-                }
 
                 job.Init(blockTemplate, NextJobId(),
                     poolConfig, extraPoolConfig, clusterConfig, clock, poolAddressDestination, network, isPoS,
@@ -182,6 +194,8 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
 
                 if(isNew)
                 {
+                    submittedAuxHashes.Clear();
+
                     if(via != null)
                         logger.Info(() => $"Detected new block {blockTemplate.Height} [{via}]");
                     else
@@ -344,27 +358,43 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
         // Submit to any aux chains (merged mining) if this share met their targets
         if(share.AuxCandidates?.Count > 0 && auxPowManagers.Count > 0)
         {
+            var submittingJob = job;
             foreach(var (auxBlock, headerBytes, coinbase) in share.AuxCandidates)
             {
+                // Duplicate guard: two concurrent shares could both meet the aux target
+                if(!submittedAuxHashes.TryAdd(auxBlock.Hash, 1))
+                {
+                    logger.Debug(() => $"Skipping duplicate aux submission for {auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]}");
+                    continue;
+                }
+
                 var manager = auxPowManagers.FirstOrDefault(m => m.CurrentAuxBlock?.Hash == auxBlock.Hash);
                 if(manager == null) continue;
 
-                logger.Info(() => "Submitting merged block to " + manager.Config.Name);
+                try
+                {
+                    logger.Info(() => "Submitting merged block to " + manager.Config.Name);
 
-                // Build merkle branch: coinbase is first tx, so branch from merkle tree
-                // For simplicity with a single coinbase, branch is empty if only one tx
-                var coinbaseTxHex = coinbase.ToHexString();
-                var auxPoWHex = AuxPowSerializer.BuildAuxPoWHex(coinbaseTxHex, headerBytes, new List<byte[]>());
+                    var coinbaseTxHex = coinbase.ToHexString();
+                    var merkleBranch = submittingJob?.MerkleBranchSteps ?? new List<byte[]>();
+                    var auxPoWHex = AuxPowSerializer.BuildAuxPoWHex(coinbaseTxHex, headerBytes, merkleBranch);
 
-                await manager.SubmitAuxBlockAsync(auxBlock.Hash, auxPoWHex, ct);
+                    await manager.SubmitAuxBlockAsync(auxBlock.Hash, auxPoWHex, ct);
+                }
+                catch(Exception ex)
+                {
+                    // Don't let aux submission failure affect the accepted primary share
+                    logger.Error(ex, () => $"Error submitting merged block to {manager.Config.Name}");
+                }
             }
         }
 
         // Refresh aux blocks on every share (rate-limited internally)
+        // Use CancellationToken.None so a miner disconnect doesn't abort the refresh
         if(auxPowManagers.Count > 0)
         {
             foreach(var manager in auxPowManagers)
-                _ = manager.RefreshAsync(ct);
+                _ = manager.RefreshAsync(CancellationToken.None);
         }
 
         return share;

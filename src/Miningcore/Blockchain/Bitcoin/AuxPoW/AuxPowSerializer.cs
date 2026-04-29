@@ -53,18 +53,16 @@ public static class AuxPowSerializer
         {
             // AuxPoW spec: aux hash must be in little-endian (byte-reversed) in the coinbase
             var hashBytes = cleanHash.HexToByteArray();
-            
+
             // Double-check we got exactly 32 bytes
             if(hashBytes.Length != 32)
                 return null;
 
-            var reversedHash = hashBytes.Reverse().ToArray();
-
-            // AuxPoW spec: hash must be in little-endian in the coinbase
-            // getauxblock returns the hash in the correct byte order for embedding
+            // AuxPoW spec: getauxblock returns the hash already in little-endian byte order
+            // for coinbase embedding — do NOT reverse it
             using var ms = new MemoryStream();
             ms.Write(MergeMiningHeader);
-            ms.Write(reversedHash);                                    // aux block hash (32 bytes)
+            ms.Write(hashBytes);                                       // aux block hash (32 bytes, as returned by getauxblock)
             ms.Write(BitConverter.GetBytes(numChains));                // number of chains (4 bytes LE)
             ms.Write(BitConverter.GetBytes(nonce));                    // nonce (4 bytes LE)
             return ms.ToArray();
@@ -92,12 +90,13 @@ public static class AuxPowSerializer
 
         using var ms = new MemoryStream();
 
-        // 1. Parent coinbase transaction
-        WriteVarInt(ms, (ulong) coinbaseTxBytes.Length);
+        // 1. Parent coinbase transaction (raw bytes, no length prefix)
         ms.Write(coinbaseTxBytes);
 
         // 2. Parent block hash (double-SHA256 of parent header, little-endian)
+        // NBitcoin ToBytes() returns big-endian display order; AuxPoW needs little-endian
         var parentHash = Hashes.DoubleSHA256(parentHeaderBytes).ToBytes();
+        Array.Reverse(parentHash);
         ms.Write(parentHash);
 
         // 3. Coinbase merkle branch (branch from coinbase tx to merkle root)
