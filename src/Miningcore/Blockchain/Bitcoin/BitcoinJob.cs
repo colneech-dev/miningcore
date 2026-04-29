@@ -328,8 +328,27 @@ public class BitcoinJob
             {
                 if(!string.IsNullOrEmpty(aux?.Hash))
                 {
-                    var commitment = AuxPowSerializer.BuildCoinbaseCommitment(aux.Hash);
-                    ops.Add(Op.GetPushOp(commitment));
+                    try
+                    {
+                        var commitment = AuxPowSerializer.BuildCoinbaseCommitment(aux.Hash);
+                        
+                        // If commitment is null, the aux chain data was incomplete/invalid
+                        // (typically due to daemon still syncing)
+                        if(commitment != null)
+                        {
+                            ops.Add(Op.GetPushOp(commitment));
+                        }
+                        else
+                        {
+                            logger.Warn(() => $"Skipping aux chain '{aux.ChainId}' - received invalid/incomplete block hash. " +
+                                "Daemon may still be syncing.");
+                        }
+                    }
+                    catch(Exception ex)
+                    {
+                        logger.Warn(() => $"Error processing aux chain '{aux.ChainId}': {ex.Message}. " +
+                            "Skipping this chain. Daemon may have synchronization issues.");
+                    }
                 }
             }
         }

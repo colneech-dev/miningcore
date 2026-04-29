@@ -1,3 +1,5 @@
+#nullable enable
+
 using System.Security.Cryptography;
 using Miningcore.Extensions;
 using NBitcoin;
@@ -31,19 +33,47 @@ public static class AuxPowSerializer
     /// Builds the coinbase commitment bytes to embed in the parent coinbase scriptSig.
     /// Format: 0xfabe6d6d + auxHash(32) + numChains(4LE) + nonce(4LE)
     /// </summary>
-    public static byte[] BuildCoinbaseCommitment(string auxHash, int numChains = 1, uint nonce = 0)
+    /// <param name="auxHash">Hex-encoded aux block hash (must be valid 64 hex chars = 32 bytes)</param>
+    /// <param name="numChains">Number of chains (default 1)</param>
+    /// <param name="nonce">Merge mining nonce</param>
+    /// <returns>Commitment bytes, or null if hash is invalid</returns>
+    public static byte[]? BuildCoinbaseCommitment(string auxHash, int numChains = 1, uint nonce = 0)
     {
-        // AuxPoW spec: aux hash must be in little-endian (byte-reversed) in the coinbase
-        var hashBytes = auxHash.HexToByteArray().Reverse().ToArray();
+        // Validate input
+        if(string.IsNullOrWhiteSpace(auxHash))
+            return null;
 
-        // AuxPoW spec: hash must be in little-endian in the coinbase
-        // getauxblock returns the hash in the correct byte order for embedding
-        using var ms = new MemoryStream();
-        ms.Write(MergeMiningHeader);
-        ms.Write(hashBytes);                                           // aux block hash (32 bytes)
-        ms.Write(BitConverter.GetBytes(numChains));                    // number of chains (4 bytes LE)
-        ms.Write(BitConverter.GetBytes(nonce));                        // nonce (4 bytes LE)
-        return ms.ToArray();
+        // Aux hash must be exactly 64 hex characters (32 bytes)
+        // If it's too short, the daemon is still syncing or has returned incomplete data
+        var cleanHash = auxHash.StartsWith("0x") ? auxHash[2..] : auxHash;
+        if(cleanHash.Length != 64)
+            return null; // Invalid hash length - daemon likely syncing or returning bad data
+
+        try
+        {
+            // AuxPoW spec: aux hash must be in little-endian (byte-reversed) in the coinbase
+            var hashBytes = cleanHash.HexToByteArray();
+            
+            // Double-check we got exactly 32 bytes
+            if(hashBytes.Length != 32)
+                return null;
+
+            var reversedHash = hashBytes.Reverse().ToArray();
+
+            // AuxPoW spec: hash must be in little-endian in the coinbase
+            // getauxblock returns the hash in the correct byte order for embedding
+            using var ms = new MemoryStream();
+            ms.Write(MergeMiningHeader);
+            ms.Write(reversedHash);                                    // aux block hash (32 bytes)
+            ms.Write(BitConverter.GetBytes(numChains));                // number of chains (4 bytes LE)
+            ms.Write(BitConverter.GetBytes(nonce));                    // nonce (4 bytes LE)
+            return ms.ToArray();
+        }
+        catch
+        {
+            // If conversion fails (invalid hex chars, etc), return null
+            return null;
+        }
     }
 
     /// <summary>
