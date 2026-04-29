@@ -16,8 +16,8 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean
 WORKDIR /app
 COPY . .
-# Build native libmultihash
-RUN cd /app/src/Native/libmultihash && make -j$(nproc)
+# Build native libmultihash (CPU_FLAGS enables AES-NI and SSE4.2 required by xelishash)
+RUN cd /app/src/Native/libmultihash && make -j$(nproc) CPU_FLAGS="-maes -msse4.2"
 # Fix RandomARQ and Panthera to only build randomx target, skipping broken tests
 RUN sed -i \
     's|cmake -DARCH=native -DCMAKE_C_FLAGS=-Wa,--noexecstack -DCMAKE_CXX_FLAGS=-Wa,--noexecstack .. && make) && (cd ../Native/librandomarq|cmake -DARCH=native -DCMAKE_C_FLAGS=-Wa,--noexecstack -DCMAKE_CXX_FLAGS=-Wa,--noexecstack .. \&\& make randomx) \&\& (cd ../Native/librandomarq|g' \
