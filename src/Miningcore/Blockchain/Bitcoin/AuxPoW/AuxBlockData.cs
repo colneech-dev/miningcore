@@ -4,7 +4,7 @@ namespace Miningcore.Blockchain.Bitcoin.AuxPoW;
 /// Data returned by the aux chain daemon's getauxblock RPC call.
 /// Contains the current aux chain block template for merge mining.
 /// </summary>
-public class AuxBlockData
+public record AuxBlockData
 {
     /// <summary>Hash of the aux chain block we are working on (hex)</summary>
     public string Hash { get; set; }

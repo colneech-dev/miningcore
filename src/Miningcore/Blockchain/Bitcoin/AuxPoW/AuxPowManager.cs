@@ -16,21 +16,33 @@ namespace Miningcore.Blockchain.Bitcoin.AuxPoW;
 /// Polls each aux chain daemon via getauxblock, stores current work, and submits
 /// merged blocks when a share meets the aux chain's difficulty.
 /// </summary>
-public class AuxPowManager
+public class AuxPowManager : IDisposable
 {
-    private static readonly ILogger logger = LogManager.GetCurrentClassLogger();
+    private readonly ILogger logger;
 
     private readonly AuxChainConfig config;
     private readonly RpcClient rpc;
     private volatile AuxBlockData currentAuxBlock;
     private readonly SemaphoreSlim fetchLock = new(1, 1);
-    private DateTimeOffset lastFetch = DateTimeOffset.MinValue;
-    private static readonly TimeSpan FetchInterval = TimeSpan.FromSeconds(10);
+    private volatile bool auxBlockInvalidated = true;
+    private long lastFetchTicks;
+    private readonly TimeSpan fetchInterval;
 
     public AuxPowManager(AuxChainConfig config, JsonSerializerSettings serializerSettings, IMessageBus messageBus)
     {
         this.config = config;
+        logger = LogManager.GetLogger(config.Id);
+
+        if(config.Daemons == null || config.Daemons.Length == 0)
+            throw new ArgumentException($"AuxChain '{config.Id}' has no daemons configured");
+
         rpc = new RpcClient(config.Daemons.First(), serializerSettings, messageBus, config.Id);
+        fetchInterval = TimeSpan.FromSeconds(config.PollIntervalSeconds > 0 ? config.PollIntervalSeconds : 10);
+    }
+
+    public void Dispose()
+    {
+        fetchLock.Dispose();
     }
 
     public AuxChainConfig Config => config;
@@ -41,7 +53,8 @@ public class AuxPowManager
     /// </summary>
     public async Task RefreshAsync(CancellationToken ct)
     {
-        if(DateTimeOffset.UtcNow - lastFetch < FetchInterval)
+        var elapsed = TimeSpan.FromTicks(DateTimeOffset.UtcNow.Ticks - Interlocked.Read(ref lastFetchTicks));
+        if(!auxBlockInvalidated && elapsed < fetchInterval)
             return;
 
         if(!await fetchLock.WaitAsync(0, ct))
@@ -73,7 +86,8 @@ public class AuxPowManager
                 block.TargetValue = new uint256(block.Target.HexToByteArray().Reverse().ToArray());
 
             currentAuxBlock = block;
-            lastFetch = DateTimeOffset.UtcNow;
+            Interlocked.Exchange(ref lastFetchTicks, DateTimeOffset.UtcNow.Ticks);
+            auxBlockInvalidated = false;
 
             logger.Debug(() => $"[{config.Id}] AuxBlock refreshed: height={block.Height} target={block.Target}");
         }
@@ -103,7 +117,11 @@ public class AuxPowManager
             return false;
         }
 
-        var accepted = response.Response?.Value<bool>() ?? false;
+        // Some daemons return null/omit result on success; only an explicit false means rejection
+        var accepted = response.Error == null &&
+            (response.Response == null || response.Response.Type == JTokenType.Null ||
+             response.Response.Type != JTokenType.Boolean ||
+             response.Response.Value<bool>());
 
         if(accepted)
             logger.Info(() => $"[{config.Id}] Merged block accepted by {config.Name}!");
@@ -111,7 +129,7 @@ public class AuxPowManager
             logger.Warn(() => $"[{config.Id}] Merged block rejected by {config.Name}");
 
         // Invalidate current aux block to force refresh on next share
-        lastFetch = DateTimeOffset.MinValue;
+        auxBlockInvalidated = true;
 
         return accepted;
     }

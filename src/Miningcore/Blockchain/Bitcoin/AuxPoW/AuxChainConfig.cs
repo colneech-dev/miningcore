@@ -22,4 +22,7 @@ public class AuxChainConfig
 
     /// <summary>Address to receive aux chain block rewards</summary>
     public string Address { get; set; }
+
+    /// <summary>How often to poll getauxblock (seconds). Defaults to 10.</summary>
+    public int PollIntervalSeconds { get; set; } = 10;
 }
