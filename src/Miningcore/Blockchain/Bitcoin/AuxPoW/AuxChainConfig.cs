@@ -25,4 +25,10 @@ public class AuxChainConfig
 
     /// <summary>How often to poll getauxblock (seconds). Defaults to 10.</summary>
     public int PollIntervalSeconds { get; set; } = 10;
+
+    /// <summary>RPC method to fetch aux work. Use "createauxblock" for chains that require an address param. Defaults to "getauxblock".</summary>
+    public string GetAuxBlockMethod { get; set; } = "getauxblock";
+
+    /// <summary>If true, log getauxblock failures at Debug instead of Warn (useful for chains that are still syncing or not always available).</summary>
+    public bool SilentErrors { get; set; } = false;
 }

@@ -62,11 +62,19 @@ public class AuxPowManager : IDisposable
 
         try
         {
-            var response = await rpc.ExecuteAsync<JToken>(logger, "getauxblock", ct);
+            var method = config.GetAuxBlockMethod;
+            object args = method == "createauxblock" && !string.IsNullOrEmpty(config.Address)
+                ? new object[] { config.Address }
+                : null;
+
+            var response = await rpc.ExecuteAsync<JToken>(logger, method, ct, args);
 
             if(response.Error != null)
             {
-                logger.Warn(() => $"[{config.Id}] getauxblock failed: {response.Error.Message}");
+                if(config.SilentErrors)
+                    logger.Debug(() => $"[{config.Id}] {method} failed: {response.Error.Message}");
+                else
+                    logger.Warn(() => $"[{config.Id}] {method} failed: {response.Error.Message}");
                 return;
             }
 
@@ -93,7 +101,10 @@ public class AuxPowManager : IDisposable
         }
         catch(Exception ex)
         {
-            logger.Warn(() => $"[{config.Id}] getauxblock exception: {ex.Message}");
+            if(config.SilentErrors)
+                logger.Debug(() => $"[{config.Id}] {config.GetAuxBlockMethod} exception: {ex.Message}");
+            else
+                logger.Warn(() => $"[{config.Id}] {config.GetAuxBlockMethod} exception: {ex.Message}");
         }
         finally
         {
