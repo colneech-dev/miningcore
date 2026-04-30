@@ -62,6 +62,10 @@ public class BitcoinJob
     // serialization constants
     protected byte[] scriptSigFinalBytes;
 
+    // Aux chain merkle tree (built once per job from active aux blocks)
+    private byte[][] auxMerkleNodes;
+    private int auxMerkleTreeSize = 1;
+
     protected static byte[] sha256Empty = new byte[32];
     protected uint txVersion = 1u; // transaction version (currently 1) - see https://en.bitcoin.it/wiki/Transaction
 
@@ -322,36 +326,23 @@ public class BitcoinJob
         // push placeholder
         ops.Add(Op.GetPushOp(0));
 
-        // Embed aux chain commitments for merge mining (AuxPoW)
-        // Format per aux chain: 0xfabe6d6d + auxHash(32,LE) + merkleSize(4,LE) + nonce(4,LE)
+        // Embed a single aux chain merkle tree commitment for merge mining (AuxPoW).
+        // All active aux chains are placed in one merkle tree; only the root is committed.
+        // Format: 0xfabe6d6d + merkleRoot(32) + treeSize(4LE) + nonce(4LE) = 44 bytes
         if(auxBlocks != null)
         {
-            foreach(var aux in auxBlocks)
+            var activeAux = auxBlocks
+                .Where(a => a != null && !string.IsNullOrEmpty(a.Hash))
+                .ToList();
+
+            if(activeAux.Count > 0)
             {
-                if(!string.IsNullOrEmpty(aux?.Hash))
-                {
-                    try
-                    {
-                        var commitment = AuxPowSerializer.BuildCoinbaseCommitment(aux.Hash);
-                        
-                        // If commitment is null, the aux chain data was incomplete/invalid
-                        // (typically due to daemon still syncing)
-                        if(commitment != null)
-                        {
-                            ops.Add(Op.GetPushOp(commitment));
-                        }
-                        else
-                        {
-                            logger.Warn(() => $"Skipping aux chain '{aux.ChainId}' - received invalid/incomplete block hash. " +
-                                "Daemon may still be syncing.");
-                        }
-                    }
-                    catch(Exception ex)
-                    {
-                        logger.Warn(() => $"Error processing aux chain '{aux.ChainId}': {ex.Message}. " +
-                            "Skipping this chain. Daemon may have synchronization issues.");
-                    }
-                }
+                var (nodes, treeSize) = AuxPowSerializer.BuildAuxTree(activeAux);
+                auxMerkleNodes = nodes;
+                auxMerkleTreeSize = treeSize;
+
+                var commitment = AuxPowSerializer.BuildCoinbaseCommitment(nodes[1], treeSize);
+                ops.Add(Op.GetPushOp(commitment));
             }
         }
 
@@ -1018,6 +1009,8 @@ public class BitcoinJob
 
     public List<byte[]> MerkleBranchSteps => mt?.Steps?.ToList() ?? new List<byte[]>();
     public AuxBlockData[] AuxBlocks => auxBlocks;
+    public byte[][] AuxMerkleNodes => auxMerkleNodes;
+    public int AuxMerkleTreeSize => auxMerkleTreeSize;
 
     public void Init(BlockTemplate blockTemplate, string jobId,
         PoolConfig pc, BitcoinPoolConfigExtra extraPoolConfig,
