@@ -92,6 +92,11 @@ public class AuxPowManager : IDisposable
 
             if(!string.IsNullOrEmpty(block.Target))
                 block.TargetValue = new uint256(block.Target.HexToByteArray().Reverse().ToArray());
+            else if(!string.IsNullOrEmpty(block.Bits))
+            {
+                var tmp = new NBitcoin.Target(block.Bits.HexToByteArray());
+                block.TargetValue = tmp.ToUInt256();
+            }
 
             currentAuxBlock = block;
             Interlocked.Exchange(ref lastFetchTicks, DateTimeOffset.UtcNow.Ticks);
