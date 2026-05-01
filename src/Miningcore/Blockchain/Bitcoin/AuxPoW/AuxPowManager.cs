@@ -91,7 +91,7 @@ public class AuxPowManager : IDisposable
             };
 
             if(!string.IsNullOrEmpty(block.Target))
-                block.TargetValue = new uint256(block.Target.HexToByteArray().Reverse().ToArray());
+                block.TargetValue = new uint256(block.Target.HexToByteArray()); // target is already little-endian (internal byte order)
             else if(!string.IsNullOrEmpty(block.Bits))
             {
                 var tmp = new NBitcoin.Target(block.Bits.HexToByteArray());
