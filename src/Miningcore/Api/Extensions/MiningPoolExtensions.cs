@@ -23,7 +23,7 @@ public static class MiningPoolExtensions
         poolInfo.NetworkStats = pool?.NetworkStats ?? (stats != null ? mapper.Map<BlockchainStats>(stats) : new BlockchainStats());
 
         // pool wallet link
-        var addressInfobaseUrl = poolConfig.Template.ExplorerAccountLink;
+        var addressInfobaseUrl = poolConfig.Template?.ExplorerAccountLink;
         if(!string.IsNullOrEmpty(addressInfobaseUrl))
             poolInfo.AddressInfoLink = string.Format(addressInfobaseUrl, poolInfo.Address);
 
@@ -31,10 +31,10 @@ public static class MiningPoolExtensions
         poolInfo.PoolFeePercent = poolConfig.RewardRecipients != null ? (float) poolConfig.RewardRecipients.Sum(x => x.Percentage) : 0;
 
         // strip security critical stuff
-        if(poolInfo.PaymentProcessing.Extra != null)
+        if(poolInfo.PaymentProcessing?.Extra != null && poolInfo.Coin != null)
         {
             var extra = poolInfo.PaymentProcessing.Extra;
-            
+
             switch(poolInfo.Coin.Family)
             {
                 case "alephium":
