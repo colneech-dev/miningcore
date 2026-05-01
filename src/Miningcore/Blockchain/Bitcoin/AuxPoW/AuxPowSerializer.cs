@@ -65,10 +65,11 @@ public static class AuxPowSerializer
             nodes[treeSize + i] = ZeroHash;
 
         // Place each aux chain hash at its slot
+        // aux.Hash is big-endian (display/RPC format); reverse to little-endian (internal wire format)
         foreach(var aux in activeAuxBlocks)
         {
             int slot = aux.ChainId % treeSize;
-            nodes[treeSize + slot] = aux.Hash.HexToByteArray();
+            nodes[treeSize + slot] = aux.Hash.HexToByteArray().Reverse().ToArray();
         }
 
         if(treeSize == 1)
@@ -153,9 +154,8 @@ public static class AuxPowSerializer
         // 1. Parent coinbase transaction (raw bytes, no length prefix)
         ms.Write(coinbaseTxBytes);
 
-        // 2. Parent block hash (double-SHA256 of parent header, little-endian)
+        // 2. Parent block hash (double-SHA256 of parent header, internal/little-endian byte order)
         var parentHash = Hashes.DoubleSHA256(parentHeaderBytes).ToBytes();
-        Array.Reverse(parentHash);
         ms.Write(parentHash);
 
         // 3. Coinbase merkle branch (path from coinbase tx to block merkle root)
