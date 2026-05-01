@@ -247,7 +247,7 @@ public class PoolApiController : ApiControllerBase
             .ToArray();
 
         // enrich blocks
-        var blockInfobaseDict = pool.Template.ExplorerBlockLinks;
+        var blockInfobaseDict = pool.Template?.ExplorerBlockLinks;
 
         foreach(var block in blocks)
         {
@@ -288,7 +288,7 @@ public class PoolApiController : ApiControllerBase
             .ToArray();
 
         // enrich blocks
-        var blockInfobaseDict = pool.Template.ExplorerBlockLinks;
+        var blockInfobaseDict = pool.Template?.ExplorerBlockLinks;
 
         foreach(var block in blocks)
         {
@@ -456,7 +456,7 @@ public class PoolApiController : ApiControllerBase
             .ToArray();
 
         // enrich blocks
-        var blockInfobaseDict = pool.Template.ExplorerBlockLinks;
+        var blockInfobaseDict = pool.Template?.ExplorerBlockLinks;
 
         foreach(var block in blocks)
         {
@@ -503,7 +503,7 @@ public class PoolApiController : ApiControllerBase
             .ToArray();
 
         // enrich blocks
-        var blockInfobaseDict = pool.Template.ExplorerBlockLinks;
+        var blockInfobaseDict = pool.Template?.ExplorerBlockLinks;
 
         foreach(var block in blocks)
         {
