@@ -461,6 +461,29 @@
         "explorerTxLink": "https://explorer.btcnickel.com/tx/{0}",
         "explorerAccountLink": "https://explorer.btcnickel.com/address/{0}"
     },
+    "bitcoin-ii": {
+        "name": "Bitcoin II",
+        "canonicalName": "Bitcoin II",
+        "symbol": "BC2",
+        "family": "bitcoin",
+        "website": "https://github.com/Bitcoin-II/BitcoinII-Core",
+        "market": "https://coinmarketcap.com/currencies/bitcoin-2/",
+        "coinbaseHasher": {
+            "hash": "sha256d"
+        },
+        "headerHasher": {
+            "hash": "sha256d"
+        },
+        "blockHasher": {
+            "hash": "reverse",
+            "args": [
+                {
+                    "hash": "sha256d"
+                }
+            ]
+        },
+        "coinbaseMinConfimations": 100
+    },
     "bitcore": {
         "name": "Bitcore",
         "canonicalName": "Bitcore",
