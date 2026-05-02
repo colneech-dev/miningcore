@@ -383,6 +383,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                         auxBlock.ChainId);
                     var auxPoWHex = AuxPowSerializer.BuildAuxPoWHex(coinbaseTxHex, headerBytes, merkleBranch, auxBranch, auxIndex);
 
+                    logger.Info(() => $"AuxPoW [{manager.Config.Id}] hash={auxBlock.Hash} treeSize={submittingJob?.AuxMerkleTreeSize} auxIndex={auxIndex} auxBranchLen={auxBranch.Count} coinbaseBranchLen={merkleBranch.Count} auxPoW={auxPoWHex}");
                     await manager.SubmitAuxBlockAsync(auxBlock.Hash, auxPoWHex, ct);
                 }
                 catch(Exception ex)
