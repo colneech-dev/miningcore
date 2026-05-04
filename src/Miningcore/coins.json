@@ -6916,5 +6916,24 @@
         "explorerBlockLink": "https://explorer.litecoinii.org/block/$",
         "explorerTxLink": "https://explorer.litecoinii.org/tx/{0}",
         "explorerAccountLink": "https://explorer.litecoinii.org/address/{0}"
+    },
+    "fractal": {
+        "name": "Fractal Bitcoin",
+        "canonicalName": "Fractal",
+        "symbol": "FB",
+        "family": "bitcoin",
+        "website": "https://fractalbitcoin.org/",
+        "market": "https://coinmarketcap.com/currencies/fractal-bitcoin/",
+        "twitter": "https://x.com/fractalgaming",
+        "telegram": "",
+        "discord": "",
+        "coinbaseHasher": { "hash": "sha256d" },
+        "headerHasher": { "hash": "sha256d" },
+        "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
+        "shareMultiplier": 1,
+        "coinbaseMinConfimations": 101,
+        "explorerBlockLink": "https://explorer.fractalbitcoin.org/block/$",
+        "explorerTxLink": "https://explorer.fractalbitcoin.org/tx/{0}",
+        "explorerAccountLink": "https://explorer.fractalbitcoin.org/address/{0}"
     }
 }
