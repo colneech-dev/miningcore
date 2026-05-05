@@ -1,4 +1,6 @@
 using FluentValidation;
+using Miningcore.Blockchain.Bitcoin.Configuration;
+using Miningcore.Extensions;
 using System.Security.Cryptography.X509Certificates;
 
 namespace Miningcore.Configuration;
@@ -186,6 +188,24 @@ public class PoolConfigValidator : AbstractValidator<PoolConfig>
 
         RuleForEach(j => j.Daemons)
             .SetValidator(new AuthenticatedNetworkEndpointConfigValidator<DaemonEndpointConfig>());
+
+        // Validate auxChains don't include the pool's own coin
+        RuleFor(j => j.Extra)
+            .Must((pool, extra, ctx) =>
+            {
+                var bitcoinExtra = extra?.SafeExtensionDataAs<BitcoinPoolConfigExtra>();
+                if(bitcoinExtra?.AuxChains != null)
+                {
+                    var selfAuxCoin = bitcoinExtra.AuxChains.FirstOrDefault(aux => aux.Id == pool.Coin);
+                    if(selfAuxCoin != null)
+                    {
+                        ctx.MessageFormatter.AppendArgument("coinId", pool.Coin);
+                        return false;
+                    }
+                }
+                return true;
+            })
+            .WithMessage("Pool cannot have itself ({coinId}) as an auxiliary coin");
     }
 }
 
