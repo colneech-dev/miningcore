@@ -12,103 +12,57 @@ public class AuxPowSerializerTests
 {
     #region BuildCoinbaseCommitment
 
-    [Fact]
-    public void BuildCoinbaseCommitment_ReturnsNull_ForNull()
+    private static byte[] MerkleRoot32(byte fill = 0xaa)
     {
-        Assert.Null(AuxPowSerializer.BuildCoinbaseCommitment(null));
+        var b = new byte[32];
+        Array.Fill(b, fill);
+        return b;
     }
 
     [Fact]
-    public void BuildCoinbaseCommitment_ReturnsNull_ForEmpty()
+    public void BuildCoinbaseCommitment_Returns44Bytes()
     {
-        Assert.Null(AuxPowSerializer.BuildCoinbaseCommitment(string.Empty));
-    }
-
-    [Fact]
-    public void BuildCoinbaseCommitment_ReturnsNull_ForShortHash()
-    {
-        // 62 hex chars = 31 bytes — too short
-        Assert.Null(AuxPowSerializer.BuildCoinbaseCommitment(new string('a', 62)));
-    }
-
-    [Fact]
-    public void BuildCoinbaseCommitment_ReturnsNull_ForLongHash()
-    {
-        // 66 hex chars = 33 bytes — too long
-        Assert.Null(AuxPowSerializer.BuildCoinbaseCommitment(new string('a', 66)));
+        var result = AuxPowSerializer.BuildCoinbaseCommitment(MerkleRoot32(), treeSize: 1);
+        Assert.Equal(44, result.Length);
     }
 
     [Fact]
     public void BuildCoinbaseCommitment_StartsWithMergeMiningHeader()
     {
-        var hash = new string('a', 64);
-        var result = AuxPowSerializer.BuildCoinbaseCommitment(hash);
-
-        Assert.NotNull(result);
+        var result = AuxPowSerializer.BuildCoinbaseCommitment(MerkleRoot32(), treeSize: 1);
         Assert.Equal(AuxPowSerializer.MergeMiningHeader, result[..4]);
     }
 
     [Fact]
-    public void BuildCoinbaseCommitment_HasCorrectTotalLength()
+    public void BuildCoinbaseCommitment_EmbedsMerkleRootAtOffset4()
     {
-        var hash = new string('a', 64);
-        var result = AuxPowSerializer.BuildCoinbaseCommitment(hash);
-
-        // 4 (header) + 32 (hash) + 4 (numChains) + 4 (nonce) = 44
-        Assert.NotNull(result);
-        Assert.Equal(44, result.Length);
+        var root = MerkleRoot32(0x55);
+        var result = AuxPowSerializer.BuildCoinbaseCommitment(root, treeSize: 1);
+        Assert.Equal(root, result[4..36]);
     }
 
     [Fact]
-    public void BuildCoinbaseCommitment_EmbedHashWithoutReversal_FIX_D()
+    public void BuildCoinbaseCommitment_TreeSizeEncodedLE()
     {
-        // The hash returned by getauxblock is already in the correct byte order for embedding.
-        // We must NOT reverse it.
-        var hashHex = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
-        var expectedHashBytes = hashHex.HexToByteArray();
-
-        var result = AuxPowSerializer.BuildCoinbaseCommitment(hashHex);
-
-        Assert.NotNull(result);
-        // Hash bytes start immediately after the 4-byte merge mining header
-        var embeddedHash = result[4..36];
-        Assert.Equal(expectedHashBytes, embeddedHash);
+        var result = AuxPowSerializer.BuildCoinbaseCommitment(MerkleRoot32(), treeSize: 3);
+        var treeSize = BitConverter.ToInt32(result, 36);
+        Assert.Equal(3, treeSize);
     }
 
     [Fact]
-    public void BuildCoinbaseCommitment_EmbedHashWithoutReversal_0xPrefix()
+    public void BuildCoinbaseCommitment_DefaultNonceIsZero()
     {
-        var hashHex = "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
-        var expectedHashBytes = hashHex[2..].HexToByteArray();
-
-        var result = AuxPowSerializer.BuildCoinbaseCommitment(hashHex);
-
-        Assert.NotNull(result);
-        Assert.Equal(expectedHashBytes, result[4..36]);
-    }
-
-    [Fact]
-    public void BuildCoinbaseCommitment_NumChainsEncodedLE()
-    {
-        var hash = new string('0', 64);
-        var result = AuxPowSerializer.BuildCoinbaseCommitment(hash, numChains: 3);
-
-        Assert.NotNull(result);
-        // numChains at offset 36, little-endian uint32
-        var numChains = BitConverter.ToUInt32(result, 36);
-        Assert.Equal(3u, numChains);
-    }
-
-    [Fact]
-    public void BuildCoinbaseCommitment_NonceEncodedLE()
-    {
-        var hash = new string('0', 64);
-        var result = AuxPowSerializer.BuildCoinbaseCommitment(hash, nonce: 0xDEADBEEF);
-
-        Assert.NotNull(result);
-        // nonce at offset 40, little-endian uint32
+        var result = AuxPowSerializer.BuildCoinbaseCommitment(MerkleRoot32(), treeSize: 1);
         var nonce = BitConverter.ToUInt32(result, 40);
-        Assert.Equal(0xDEADBEEF, nonce);
+        Assert.Equal(0u, nonce);
+    }
+
+    [Fact]
+    public void BuildCoinbaseCommitment_CustomNonceEncodedLE()
+    {
+        var result = AuxPowSerializer.BuildCoinbaseCommitment(MerkleRoot32(), treeSize: 1, nonce: 0xDEADBEEF);
+        var nonce = BitConverter.ToUInt32(result, 40);
+        Assert.Equal(0xDEADBEEFu, nonce);
     }
 
     #endregion
@@ -129,27 +83,23 @@ public class AuxPowSerializerTests
     }
 
     [Fact]
-    public void BuildAuxPoWHex_ParentHashIsLittleEndian_FIX_B()
+    public void BuildAuxPoWHex_ParentHashIsInternalByteOrder()
     {
-        // FIX-B: NBitcoin ToBytes() returns big-endian display order;
-        // AuxPoW requires little-endian (reversed).
+        // NBitcoin ToBytes() returns internal (little-endian) byte order — no reversal needed.
+        // Commit 5a29ded2: removed Array.Reverse; aux daemon computes SHA256d in the same order.
         var coinbaseTxBytes = new byte[] { 0x01, 0x02, 0x03, 0x04 };
         var coinbaseTxHex = coinbaseTxBytes.ToHexString();
         var header = new byte[80];
-        // Use a non-trivial header so the hash isn't all zeros
         header[0] = 0x01;
         var branch = new List<byte[]>();
 
         var result = AuxPowSerializer.BuildAuxPoWHex(coinbaseTxHex, header, branch);
         var resultBytes = result.HexToByteArray();
 
-        // Parent hash follows the coinbase TX bytes
         var parentHashOffset = coinbaseTxBytes.Length;
         var parentHashInResult = resultBytes[parentHashOffset..(parentHashOffset + 32)];
 
-        // Expected: double-SHA256 of header, byte-reversed to little-endian
         var expectedHash = Hashes.DoubleSHA256(header).ToBytes();
-        Array.Reverse(expectedHash);
 
         Assert.Equal(expectedHash, parentHashInResult);
     }
@@ -167,7 +117,6 @@ public class AuxPowSerializerTests
 
         var result = AuxPowSerializer.BuildAuxPoWHex(coinbaseTxHex, header, branch);
 
-        // The branch hash bytes should appear somewhere after the coinbase TX and parent hash
         Assert.Contains(branchHash.ToHexString(), result, StringComparison.OrdinalIgnoreCase);
     }
 
