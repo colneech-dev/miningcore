@@ -14,30 +14,15 @@ RUN apt-get update && apt-get install -y \
     nasm yasm llvm llvm-dev gcc-multilib g++-multilib \
     libboost-all-dev libgmp-dev \
     && apt-get clean
-
 WORKDIR /app
-
-# Copy only native sources first — these change rarely, so Docker caches the
-# expensive native compile and only re-runs it when C/CMake files actually change.
-COPY src/Native/ src/Native/
-COPY src/Miningcore/build-libs-linux.sh src/Miningcore/build-libs-linux.sh
-
-# Build native libmultihash (AES-NI + SSE4.2 required by xelishash)
-RUN cd /app/src/Native/libmultihash && make -j$(nproc) CPU_FLAGS="-maes -msse4.2"
-
-# Fix RandomARQ and Panthera cmake invocations to only build the randomx target
+COPY . .
+# Fix RandomARQ and Panthera to only build randomx target, skipping broken tests
 RUN sed -i \
     's|cmake -DARCH=native -DCMAKE_C_FLAGS=-Wa,--noexecstack -DCMAKE_CXX_FLAGS=-Wa,--noexecstack .. && make) && (cd ../Native/librandomarq|cmake -DARCH=native -DCMAKE_C_FLAGS=-Wa,--noexecstack -DCMAKE_CXX_FLAGS=-Wa,--noexecstack .. \&\& make randomx) \&\& (cd ../Native/librandomarq|g' \
     /app/src/Miningcore/build-libs-linux.sh && \
     sed -i \
     's|cmake -DARCH=native .. && make) && (cd ../Native/libpanthera|cmake -DARCH=native .. \&\& make randomx) \&\& (cd ../Native/libpanthera|g' \
     /app/src/Miningcore/build-libs-linux.sh
-WORKDIR /app/src/Miningcore
-RUN ./build-libs-linux.sh
-
-# Now copy the full source and publish — cache miss here only re-runs dotnet publish
-WORKDIR /app
-COPY . .
 WORKDIR /app/src/Miningcore
 RUN dotnet publish -c Release --framework net8.0
 
