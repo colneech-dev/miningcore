@@ -207,7 +207,6 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                     BlockchainStats.NetworkDifficulty = job.Difficulty;
                     BlockchainStats.NextNetworkTarget = blockTemplate.Target;
                     BlockchainStats.NextNetworkBits = blockTemplate.Bits;
-                    BlockchainStats.BlockReward = (decimal)blockTemplate.CoinbaseValue / 100_000_000m;
 
                     // Some daemons (e.g. Fractal Bitcoin) report inflated getnetworkhashps values.
                     // If targetBlockTime is set in the coin template, recalculate from difficulty instead.
@@ -222,6 +221,9 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                     else
                         logger.Debug(() => $"Template update {blockTemplate?.Height}");
                 }
+
+                // Always keep BlockReward current — coinbase value includes fees which vary per template
+                BlockchainStats.BlockReward = (decimal)blockTemplate.CoinbaseValue / 100_000_000m;
 
                 currentJob = job;
             }
