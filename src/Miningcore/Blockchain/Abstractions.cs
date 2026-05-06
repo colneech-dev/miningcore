@@ -12,6 +12,7 @@ public class BlockchainStats
     public int ConnectedPeers { get; set; }
     public string NodeVersion { get; set; } = "Unknown";
     public string RewardType { get; set; }
+    public decimal BlockReward { get; set; }
 }
 
 public interface IExtraNonceProvider

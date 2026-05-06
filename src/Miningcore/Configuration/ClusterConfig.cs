@@ -321,6 +321,14 @@ public partial class BitcoinTemplate : CoinTemplate
     /// </summary>
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
     public int? PayoutDecimalPlaces { get; set; } = 4;
+
+    /// <summary>
+    /// Target block time in seconds. When set, overrides the daemon-reported network hashrate
+    /// with a value derived from difficulty and this target, correcting coins whose daemons
+    /// report inflated values via getnetworkhashps.
+    /// </summary>
+    [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+    public double? TargetBlockTime { get; set; }
 }
 
 public enum ConcealSubfamily

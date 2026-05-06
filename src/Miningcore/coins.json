@@ -6880,6 +6880,7 @@
         "headerHasher": { "hash": "sha256d" },
         "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
         "coinbaseMinConfimations": 200,
+        "targetBlockTime": 300,
         "explorerBlockLink": "https://explorer.bitcoinsilver.top/block/$hash$",
         "explorerTxLink": "https://explorer.bitcoinsilver.top/tx/{0}",
         "explorerAccountLink": "https://explorer.bitcoinsilver.top/address/{0}"
@@ -6932,6 +6933,7 @@
         "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
         "shareMultiplier": 1,
         "coinbaseMinConfimations": 101,
+        "targetBlockTime": 15,
         "explorerBlockLink": "https://explorer.fractalbitcoin.org/block/$",
         "explorerTxLink": "https://explorer.fractalbitcoin.org/tx/{0}",
         "explorerAccountLink": "https://explorer.fractalbitcoin.org/address/{0}"

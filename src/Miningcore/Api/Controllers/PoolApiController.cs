@@ -70,8 +70,10 @@ public class PoolApiController : ApiControllerBase
                 result.TotalBlocks = await cf.Run(con => blocksRepo.GetPoolBlockCountAsync(con, config.Id, ct));
                 result.TotalConfirmedBlocks = await cf.Run(con => blocksRepo.GetTotalConfirmedBlocksAsync(con, config.Id, ct));
                 result.TotalPendingBlocks = await cf.Run(con => blocksRepo.GetTotalPendingBlocksAsync(con, config.Id, ct));
-                // get reward of the last confirmed block and set BlockReward
+                // get reward of the last confirmed block and set BlockReward; fall back to current job's coinbase value
                 result.BlockReward = await cf.Run(con => blocksRepo.GetLastConfirmedBlockRewardAsync(con, config.Id, ct));
+                if(result.BlockReward == 0 && pool != null)
+                    result.BlockReward = pool.NetworkStats?.BlockReward ?? 0;
                 var lastBlockTime = await cf.Run(con => blocksRepo.GetLastPoolBlockTimeAsync(con, config.Id, ct));
                 result.LastPoolBlockTime = lastBlockTime;
 
@@ -149,8 +151,10 @@ public class PoolApiController : ApiControllerBase
         response.Pool.TotalBlocks = await cf.Run(con => blocksRepo.GetPoolBlockCountAsync(con, pool.Id, ct));
         response.Pool.TotalConfirmedBlocks = await cf.Run(con => blocksRepo.GetTotalConfirmedBlocksAsync(con, pool.Id, ct));
         response.Pool.TotalPendingBlocks = await cf.Run(con => blocksRepo.GetTotalPendingBlocksAsync(con, pool.Id, ct));
-        // get reward of the last confirmed block and set BlockReward
+        // get reward of the last confirmed block and set BlockReward; fall back to current job's coinbase value
         response.Pool.BlockReward = await cf.Run(con => blocksRepo.GetLastConfirmedBlockRewardAsync(con, pool.Id, ct));
+        if(response.Pool.BlockReward == 0 && poolInstance != null)
+            response.Pool.BlockReward = poolInstance.NetworkStats?.BlockReward ?? 0;
         var lastBlockTime = await cf.Run(con => blocksRepo.GetLastPoolBlockTimeAsync(con, pool.Id, ct));
         response.Pool.LastPoolBlockTime = lastBlockTime;
 
