@@ -370,17 +370,17 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
             var submittingJob = job;
             foreach(var (auxBlock, headerBytes, coinbase) in share.AuxCandidates)
             {
-                // Duplicate guard: two concurrent shares could both meet the aux target
-                if(!submittedAuxHashes.TryAdd(auxBlock.Hash, 1))
-                {
-                    logger.Debug(() => $"Skipping duplicate aux submission for {auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]}");
-                    continue;
-                }
-
                 var manager = auxPowManagers.FirstOrDefault(m => m.CurrentAuxBlock?.Hash == auxBlock.Hash);
                 if(manager == null)
                 {
                     logger.Debug(() => $"No manager found for aux block {auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]} — block likely superseded");
+                    continue;
+                }
+
+                // Duplicate guard: two concurrent shares could both meet the aux target
+                if(!submittedAuxHashes.TryAdd(auxBlock.Hash, 1))
+                {
+                    logger.Debug(() => $"Skipping duplicate aux submission for {auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]}");
                     continue;
                 }
 
