@@ -122,7 +122,8 @@ public class AuxPowManager : IDisposable
                 PreviousBlockHash = response.Response["previousblockhash"]?.Value<string>(),
                 CoinbaseValue = response.Response["coinbasevalue"]?.Value<long>() ?? 0,
                 Bits = response.Response["bits"]?.Value<string>(),
-                Target = response.Response["target"]?.Value<string>(),
+                Target = response.Response["target"]?.Value<string>()
+                    ?? response.Response["_target"]?.Value<string>(),
                 Height = response.Response["height"]?.Value<int>() ?? 0,
                 FetchedAt = DateTimeOffset.UtcNow,
             };
