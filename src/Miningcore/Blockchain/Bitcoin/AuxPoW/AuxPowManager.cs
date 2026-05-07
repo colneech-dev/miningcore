@@ -94,7 +94,7 @@ public class AuxPowManager : IDisposable
         if(!auxBlockInvalidated && elapsed < fetchInterval)
             return;
 
-        if(!await fetchLock.WaitAsync(0, ct))
+        if(!await fetchLock.WaitAsync(0))
             return;
 
         try
