@@ -322,6 +322,9 @@ public abstract class PoolBase : StratumServer,
 
     protected void ConsiderBan(StratumConnection connection, WorkerContextBase context, PoolShareBasedBanningConfig config)
     {
+        if(config == null)
+            return;
+
         var totalShares = context.Stats.ValidShares + context.Stats.InvalidShares;
 
         if(totalShares > config.CheckThreshold)
