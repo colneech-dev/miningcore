@@ -72,21 +72,14 @@ public static class AuxPowSerializer
             nodes[treeSize + slot] = aux.Hash.HexToByteArray().Reverse().ToArray();
         }
 
-        if(treeSize == 1)
+        // Build tree bottom-up: each parent = SHA256d(left || right).
+        // When treeSize == 1 the single leaf IS the root (nodes[1] already set above); loop is a no-op.
+        var combined = new byte[64];
+        for(int i = treeSize - 1; i >= 1; i--)
         {
-            // Tree of 1: root IS the leaf; node computation loop won't run
-            nodes[1] = nodes[treeSize]; // nodes[1] = nodes[1] (same index, already set)
-        }
-        else
-        {
-            // Build tree bottom-up: each parent = SHA256d(left || right)
-            var combined = new byte[64];
-            for(int i = treeSize - 1; i >= 1; i--)
-            {
-                nodes[2 * i].CopyTo(combined, 0);
-                nodes[2 * i + 1].CopyTo(combined, 32);
-                nodes[i] = DoubleSHA256(combined);
-            }
+            nodes[2 * i].CopyTo(combined, 0);
+            nodes[2 * i + 1].CopyTo(combined, 32);
+            nodes[i] = DoubleSHA256(combined);
         }
 
         return (nodes, treeSize);
