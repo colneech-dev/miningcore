@@ -192,10 +192,11 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                     !isPoS ? coin.BlockHasherValue : coin.PoSBlockHasherValue ?? coin.BlockHasherValue,
                     currentAuxBlocks);
 
-                if(isNew)
-                {
+                if(isNew || forceUpdate)
                     submittedAuxHashes.Clear();
 
+                if(isNew)
+                {
                     if(via != null)
                         logger.Info(() => $"Detected new block {blockTemplate.Height} [{via}]");
                     else
@@ -377,7 +378,11 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                 }
 
                 var manager = auxPowManagers.FirstOrDefault(m => m.CurrentAuxBlock?.Hash == auxBlock.Hash);
-                if(manager == null) continue;
+                if(manager == null)
+                {
+                    logger.Debug(() => $"No manager found for aux block {auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]} — block likely superseded");
+                    continue;
+                }
 
                 try
                 {

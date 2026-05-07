@@ -133,11 +133,10 @@ public class AuxPowManager : IDisposable
             return false;
         }
 
-        // Some daemons return null/omit result on success; only an explicit false means rejection
-        var accepted = response.Error == null &&
-            (response.Response == null || response.Response.Type == JTokenType.Null ||
-             response.Response.Type != JTokenType.Boolean ||
-             response.Response.Value<bool>());
+        // Some daemons return null/omit result on success; only an explicit boolean false means rejection
+        var accepted = response.Response == null
+            || response.Response.Type == JTokenType.Null
+            || (response.Response.Type == JTokenType.Boolean && response.Response.Value<bool>());
 
         if(accepted)
             logger.Info(() => $"[{config.Id}] Merged block accepted by {config.Name}!");

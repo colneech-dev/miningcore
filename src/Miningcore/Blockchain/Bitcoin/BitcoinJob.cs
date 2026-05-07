@@ -144,6 +144,22 @@ public class BitcoinJob
 
     protected virtual void BuildCoinbase()
     {
+        // Build aux chain merkle tree before GenerateScriptSigInitial so the
+        // commitment bytes are available when the script is assembled.
+        if(auxBlocks != null)
+        {
+            var activeAux = auxBlocks
+                .Where(a => a != null && !string.IsNullOrEmpty(a.Hash))
+                .ToList();
+
+            if(activeAux.Count > 0)
+            {
+                var (nodes, treeSize) = AuxPowSerializer.BuildAuxTree(activeAux);
+                auxMerkleNodes = nodes;
+                auxMerkleTreeSize = treeSize;
+            }
+        }
+
         // generate script parts
         var sigScriptInitial = GenerateScriptSigInitial();
         var sigScriptInitialBytes = sigScriptInitial.ToBytes();
@@ -326,24 +342,12 @@ public class BitcoinJob
         // push placeholder
         ops.Add(Op.GetPushOp(0));
 
-        // Embed a single aux chain merkle tree commitment for merge mining (AuxPoW).
-        // All active aux chains are placed in one merkle tree; only the root is committed.
+        // Embed the aux chain merkle tree commitment built in BuildCoinbase().
         // Format: 0xfabe6d6d + merkleRoot(32) + treeSize(4LE) + nonce(4LE) = 44 bytes
-        if(auxBlocks != null)
+        if(auxMerkleNodes != null)
         {
-            var activeAux = auxBlocks
-                .Where(a => a != null && !string.IsNullOrEmpty(a.Hash))
-                .ToList();
-
-            if(activeAux.Count > 0)
-            {
-                var (nodes, treeSize) = AuxPowSerializer.BuildAuxTree(activeAux);
-                auxMerkleNodes = nodes;
-                auxMerkleTreeSize = treeSize;
-
-                var commitment = AuxPowSerializer.BuildCoinbaseCommitment(nodes[1], treeSize);
-                ops.Add(Op.GetPushOp(commitment));
-            }
+            var commitment = AuxPowSerializer.BuildCoinbaseCommitment(auxMerkleNodes[1], auxMerkleTreeSize);
+            ops.Add(Op.GetPushOp(commitment));
         }
 
         return new Script(ops);
