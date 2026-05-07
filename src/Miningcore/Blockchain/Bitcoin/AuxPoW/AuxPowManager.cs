@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Reactive.Linq;
 using Miningcore.Blockchain.Bitcoin.AuxPoW;
 using Miningcore.Configuration;
 using Miningcore.Messaging;
@@ -47,6 +48,42 @@ public class AuxPowManager : IDisposable
 
     public AuxChainConfig Config => config;
     public AuxBlockData CurrentAuxBlock => currentAuxBlock;
+
+    /// <summary>
+    /// Subscribes to the aux chain daemon's ZMQ hashblock topic if configured.
+    /// On each notification, immediately invalidates the cached aux block so the
+    /// next RefreshAsync call fetches fresh work without waiting for the poll interval.
+    /// </summary>
+    public void StartZmqSubscription(CancellationToken ct)
+    {
+        if(string.IsNullOrEmpty(config.ZmqBlockNotifySocket))
+            return;
+
+        var topic = !string.IsNullOrEmpty(config.ZmqBlockNotifyTopic)
+            ? config.ZmqBlockNotifyTopic
+            : BitcoinConstants.ZmqPublisherTopicBlockHash;
+
+        var portMap = new Dictionary<DaemonEndpointConfig, (string Socket, string Topic)>
+        {
+            [config.Daemons.First()] = (config.ZmqBlockNotifySocket, topic)
+        };
+
+        logger.Info(() => $"[{config.Id}] Subscribing to ZMQ aux block notifications from {config.ZmqBlockNotifySocket}");
+
+        rpc.ZmqSubscribe(logger, ct, portMap)
+            .Subscribe(
+                msg =>
+                {
+                    using(msg)
+                    {
+                        auxBlockInvalidated = true;
+                        logger.Debug(() => $"[{config.Id}] ZMQ: new aux block signalled, invalidating cache");
+                        _ = RefreshAsync(ct);
+                    }
+                },
+                ex => logger.Warn(() => $"[{config.Id}] ZMQ subscription error: {ex.Message}"),
+                ct);
+    }
 
     /// <summary>
     /// Fetches fresh aux work from the daemon if the cache has expired.

@@ -191,6 +191,10 @@ public abstract class BitcoinJobManagerBase<TJob> : JobManagerBase<TJob>
             .Select(x => GetJobParamsForStratum(x.IsNew))
             .Publish()
             .RefCount();
+
+        // Start ZMQ subscriptions for aux chains that have a socket configured
+        foreach(var manager in auxPowManagers)
+            manager.StartZmqSubscription(ct);
     }
 
     protected virtual async Task ShowDaemonSyncProgressAsync(CancellationToken ct)

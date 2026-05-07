@@ -419,13 +419,14 @@ public class BitcoinJob
         return reward;
     }
 
-    protected bool RegisterSubmit(string extraNonce1, string extraNonce2, string nTime, string nonce)
+    protected bool RegisterSubmit(string extraNonce1, string extraNonce2, string nTime, string nonce, string versionBits = null)
     {
         var key = new StringBuilder()
             .Append(extraNonce1)
-            .Append(extraNonce2) // lowercase as we don't want to accept case-sensitive values as valid.
+            .Append(extraNonce2)
             .Append(nTime)
-            .Append(nonce) // lowercase as we don't want to accept case-sensitive values as valid.
+            .Append(nonce)
+            .Append(versionBits ?? string.Empty)
             .ToString();
 
         return submissions.TryAdd(key, true);
@@ -1188,8 +1189,8 @@ public class BitcoinJob
                 throw new StratumException(StratumError.Other, "rolling-version mask violation");
         }
 
-        // dupe check
-        if(!RegisterSubmit(context.ExtraNonce1, extraNonce2, nTime, nonce))
+        // dupe check — include versionBits so AsicBoost miners can submit same nonce with different version bits
+        if(!RegisterSubmit(context.ExtraNonce1, extraNonce2, nTime, nonce, versionBits))
             throw new StratumException(StratumError.DuplicateShare, "duplicate share");
 
         var (share, blockHex, auxCandidates) = ProcessShareInternal(worker, extraNonce2, nTimeInt, nonceInt, versionBitsInt);
