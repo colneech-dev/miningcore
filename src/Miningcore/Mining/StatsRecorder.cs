@@ -218,10 +218,10 @@ public class StatsRecorder : BackgroundService
                             minerHashTimeFrame = Math.Floor(hashrateCalculationWindow.TotalSeconds - timeFrameBeforeFirstShare );
 
                         if(timeFrameAfterLastShare   >= (hashrateCalculationWindow.TotalSeconds * 0.1) )
-                            minerHashTimeFrame = Math.Floor(hashrateCalculationWindow.TotalSeconds + timeFrameAfterLastShare   );
+                            minerHashTimeFrame = Math.Floor(hashrateCalculationWindow.TotalSeconds - timeFrameAfterLastShare   );
 
                         if( (timeFrameBeforeFirstShare >= (hashrateCalculationWindow.TotalSeconds * 0.1)) && (timeFrameAfterLastShare >= (hashrateCalculationWindow.TotalSeconds * 0.1)) )
-                            minerHashTimeFrame = (hashrateCalculationWindow.TotalSeconds - timeFrameBeforeFirstShare + timeFrameAfterLastShare);
+                            minerHashTimeFrame = (hashrateCalculationWindow.TotalSeconds - timeFrameBeforeFirstShare - timeFrameAfterLastShare);
 
                         if(minerHashTimeFrame < 1)
                             minerHashTimeFrame = 1;
@@ -265,7 +265,7 @@ public class StatsRecorder : BackgroundService
 
                     foreach(var item in orphanedHashrateForMinerWorker)
                     {
-                        var parts = item.Split(keySeparator);
+                        var parts = item.Split(keySeparator, 2);
                         var miner = parts[0];
                         var worker = parts.Length > 1 ? parts[1] : null;
 

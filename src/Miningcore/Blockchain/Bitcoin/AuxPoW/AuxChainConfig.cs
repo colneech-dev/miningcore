@@ -31,4 +31,12 @@ public class AuxChainConfig
 
     /// <summary>If true, log getauxblock failures at Debug instead of Warn (useful for chains that are still syncing or not always available).</summary>
     public bool SilentErrors { get; set; } = false;
+
+    /// <summary>Optional ZeroMQ socket for instant new-block notifications (e.g. "tcp://namecoin:28336").
+    /// Matches the daemon's -zmqpubhashblock setting. When set, the aux block is invalidated immediately
+    /// on each ZMQ message instead of waiting for the next poll interval.</summary>
+    public string ZmqBlockNotifySocket { get; set; }
+
+    /// <summary>ZMQ topic to subscribe to. Defaults to "hashblock".</summary>
+    public string ZmqBlockNotifyTopic { get; set; }
 }
