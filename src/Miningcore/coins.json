@@ -6937,5 +6937,36 @@
         "explorerBlockLink": "https://explorer.fractalbitcoin.org/block/$",
         "explorerTxLink": "https://explorer.fractalbitcoin.org/tx/{0}",
         "explorerAccountLink": "https://explorer.fractalbitcoin.org/address/{0}"
+    },
+    "gateviacoin": {
+        "name": "GateviaCoin",
+        "canonicalName": "GateviaCoin",
+        "symbol": "GVIA",
+        "family": "bitcoin",
+        "website": "https://github.com/gateviaofficial/gateviacoin",
+        "coinbaseHasher": { "hash": "sha256d" },
+        "headerHasher": { "hash": "sha256d" },
+        "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
+        "shareMultiplier": 1,
+        "coinbaseMinConfimations": 101,
+        "targetBlockTime": 120,
+        "explorerBlockLink": "",
+        "explorerTxLink": "",
+        "explorerAccountLink": ""
+    },
+    "btgs": {
+        "name": "BTGS",
+        "canonicalName": "BTGS",
+        "symbol": "BTGS",
+        "family": "bitcoin",
+        "website": "https://github.com/BTGSCOINDEV/BTGS",
+        "coinbaseHasher": { "hash": "sha256d" },
+        "headerHasher": { "hash": "sha256d" },
+        "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
+        "shareMultiplier": 1,
+        "coinbaseMinConfimations": 101,
+        "explorerBlockLink": "",
+        "explorerTxLink": "",
+        "explorerAccountLink": ""
     }
 }
