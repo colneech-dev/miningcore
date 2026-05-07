@@ -391,7 +391,7 @@ public abstract class BitcoinJobManagerBase<TJob> : JobManagerBase<TJob>
             {
                 var manager = new AuxPowManager(auxChain, jsonSerializerSettings, messageBus);
                 auxPowManagers.Add(manager);
-                logger.Info(() => "Aux merge mining configured for " + auxChain.Name + " (chainId=" + auxChain.ChainId + ")");
+                logger.Info(() => "Aux merge mining configured for " + auxChain.Name + " (chainId=" + auxChain.ChainId + ", zmq=" + (auxChain.ZmqBlockNotifySocket ?? "null") + ")");
             }
         }
     }
