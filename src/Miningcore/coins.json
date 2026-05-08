@@ -6950,9 +6950,9 @@
         "shareMultiplier": 1,
         "coinbaseMinConfimations": 101,
         "targetBlockTime": 120,
-        "explorerBlockLink": "",
-        "explorerTxLink": "",
-        "explorerAccountLink": ""
+        "explorerBlockLink": "https://explorer.gatevia.io/block/$hash$",
+        "explorerTxLink": "https://explorer.gatevia.io/tx/{0}",
+        "explorerAccountLink": "https://explorer.gatevia.io/address/{0}"
     },
     "btgs": {
         "name": "BTGS",
