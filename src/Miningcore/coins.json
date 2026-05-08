@@ -6965,8 +6965,8 @@
         "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
         "shareMultiplier": 1,
         "coinbaseMinConfimations": 101,
-        "explorerBlockLink": "",
-        "explorerTxLink": "",
-        "explorerAccountLink": ""
+        "explorerBlockLink": "https://explore.bitcoingold.site/block-height/$height$",
+        "explorerTxLink": "https://explore.bitcoingold.site/tx/{0}",
+        "explorerAccountLink": "https://explore.bitcoingold.site/address/{0}"
     }
 }
