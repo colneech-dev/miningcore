@@ -52,7 +52,7 @@ public static class MessageBusExtensions
         if(block.Status != BlockStatus.Orphaned)
         {
             // block explorer link
-            if(coin.ExplorerBlockLinks.TryGetValue(!string.IsNullOrEmpty(block.Type) ? block.Type : "block", out var blockInfobaseUrl))
+            if(coin.ExplorerBlockLinks?.TryGetValue(!string.IsNullOrEmpty(block.Type) ? block.Type : "block", out var blockInfobaseUrl) == true)
             {
                 if(blockInfobaseUrl.Contains(CoinMetaData.BlockHeightPH))
                     blockExplorerLink = blockInfobaseUrl.Replace(CoinMetaData.BlockHeightPH, block.BlockHeight.ToString(CultureInfo.InvariantCulture));
