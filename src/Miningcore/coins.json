@@ -6194,8 +6194,8 @@
         "subAddressPrefix": 23578,
         "subAddressPrefixTestnet": 22560,
         "subAddressPrefixStagenet": 2859546,
-        "explorerBlockLink": "https://explorer.scalaproject.io/block/$hash$",
-        "explorerTxLink": "https://explorer.scalaproject.io/tx/{0}"
+        "explorerBlockLink": "https://explorer.scala.network/block/$hash$",
+        "explorerTxLink": "https://explorer.scala.network/tx/{0}"
     },
     "zephyr": {
         "name": "Zephyr",
