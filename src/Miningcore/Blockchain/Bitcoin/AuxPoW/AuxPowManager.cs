@@ -163,11 +163,12 @@ public class AuxPowManager : IDisposable
     /// <param name="auxPoWHex">The serialized AuxPoW proof (parent header + merkle branch)</param>
     public async Task<bool> SubmitAuxBlockAsync(string auxHash, string auxPoWHex, CancellationToken ct)
     {
-        var response = await rpc.ExecuteAsync<JToken>(logger, "submitauxblock", ct, new object[] { auxHash, auxPoWHex });
+        var submitMethod = config.SubmitAuxBlockMethod;
+        var response = await rpc.ExecuteAsync<JToken>(logger, submitMethod, ct, new object[] { auxHash, auxPoWHex });
 
         if(response.Error != null)
         {
-            logger.Warn(() => $"[{config.Id}] submitauxblock failed: {response.Error.Message}");
+            logger.Warn(() => $"[{config.Id}] {submitMethod} failed: {response.Error.Message}");
             return false;
         }
 
