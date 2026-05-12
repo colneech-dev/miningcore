@@ -29,6 +29,9 @@ public class AuxChainConfig
     /// <summary>RPC method to fetch aux work. Use "createauxblock" for chains that require an address param. Defaults to "getauxblock".</summary>
     public string GetAuxBlockMethod { get; set; } = "getauxblock";
 
+    /// <summary>RPC method to submit a solved aux block. Use "getauxblock" for older daemons that accept the hash+auxpow via the same method. Defaults to "submitauxblock".</summary>
+    public string SubmitAuxBlockMethod { get; set; } = "submitauxblock";
+
     /// <summary>If true, log getauxblock failures at Debug instead of Warn (useful for chains that are still syncing or not always available).</summary>
     public bool SilentErrors { get; set; } = false;
 
