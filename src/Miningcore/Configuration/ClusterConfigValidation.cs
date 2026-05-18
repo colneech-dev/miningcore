@@ -207,18 +207,24 @@ public class PoolConfigValidator : AbstractValidator<PoolConfig>
             })
             .WithMessage("Pool cannot have itself ({coinId}) as an auxiliary coin");
 
-        // Validate each auxChain has required fields
+        // Validate each auxChain has required fields, unique ids, and valid chainId
         RuleFor(j => j.Extra)
             .Must((pool, extra, ctx) =>
             {
                 var bitcoinExtra = extra?.SafeExtensionDataAs<BitcoinPoolConfigExtra>();
                 if(bitcoinExtra?.AuxChains != null)
                 {
+                    var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     foreach(var aux in bitcoinExtra.AuxChains)
                     {
                         if(string.IsNullOrEmpty(aux.Id))
                         {
                             ctx.MessageFormatter.AppendArgument("issue", "auxChain entry is missing 'id'");
+                            return false;
+                        }
+                        if(!seenIds.Add(aux.Id))
+                        {
+                            ctx.MessageFormatter.AppendArgument("issue", $"duplicate auxChain id '{aux.Id}'");
                             return false;
                         }
                         if(aux.Daemons == null || aux.Daemons.Length == 0)

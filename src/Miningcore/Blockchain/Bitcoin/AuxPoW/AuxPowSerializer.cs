@@ -87,9 +87,12 @@ public static class AuxPowSerializer
 
         // Place each aux chain hash at its LCG-derived slot.
         // aux.Hash is big-endian (display/RPC format); reverse to little-endian (internal wire format).
+        var usedSlots = new HashSet<int>(activeAuxBlocks.Count);
         foreach(var aux in activeAuxBlocks)
         {
             int slot = (int) GetExpectedIndex(nonce, aux.ChainId, h);
+            if(!usedSlots.Add(slot))
+                throw new InvalidOperationException($"AuxPoW tree slot collision for chainId={aux.ChainId} at slot {slot} — FindNonce should have prevented this");
             nodes[treeSize + slot] = aux.Hash.HexToByteArray().Reverse().ToArray();
         }
 
@@ -140,6 +143,9 @@ public static class AuxPowSerializer
     /// </summary>
     public static byte[] BuildCoinbaseCommitment(byte[] merkleRoot, int treeSize, uint nonce = 0)
     {
+        if(merkleRoot == null || merkleRoot.Length != 32)
+            throw new ArgumentException("merkleRoot must be exactly 32 bytes", nameof(merkleRoot));
+
         using var ms = new MemoryStream(44);
         ms.Write(MergeMiningHeader);
         ms.Write(merkleRoot);

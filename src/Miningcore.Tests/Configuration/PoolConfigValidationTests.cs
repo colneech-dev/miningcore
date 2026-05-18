@@ -105,4 +105,22 @@ public class PoolConfigValidationTests
         var result = validator.TestValidate(pool);
         result.ShouldNotHaveValidationErrorFor(x => x.Extra);
     }
+
+    [Fact]
+    public void PoolConfig_ShouldFailWithDuplicateAuxChainId()
+    {
+        var pool = BasePoolConfig();
+        pool.Extra = ExtraFrom(new BitcoinPoolConfigExtra
+        {
+            AuxChains = new[]
+            {
+                new AuxChainConfig { Id = "namecoin", Name = "Namecoin", Daemons = MinimalDaemons() },
+                new AuxChainConfig { Id = "namecoin", Name = "Namecoin (duplicate)", Daemons = MinimalDaemons() }
+            }
+        });
+
+        var result = validator.TestValidate(pool);
+        result.ShouldHaveValidationErrorFor(x => x.Extra)
+            .WithErrorMessage("AuxChain config error: duplicate auxChain id 'namecoin'");
+    }
 }
