@@ -23,9 +23,10 @@ namespace Miningcore.Blockchain.Bitcoin.AuxPoW;
 /// root of the aux chain merkle tree:
 ///   0xfabe6d6d + auxMerkleRoot(32) + treeSize(4LE) + nonce(4LE)
 ///
-/// Each aux chain is placed at slot = chainId % treeSize in the tree.
-/// treeSize is the smallest power of 2 such that all (chainId % treeSize)
-/// are unique. Empty slots use a zero hash.
+/// Each aux chain is placed at slot = GetExpectedIndex(nonce, chainId, h) in the tree,
+/// where h = log2(treeSize). This is the Namecoin LCG formula used by auxpow.cpp::CAuxPow::check.
+/// The nonce is chosen so all chains have unique slots; it is embedded in the coinbase commitment.
+/// treeSize is the smallest power of 2 where a valid nonce exists. Empty slots use a zero hash.
 /// </summary>
 public static class AuxPowSerializer
 {
@@ -36,39 +37,59 @@ public static class AuxPowSerializer
     private static readonly byte[] ZeroHash = new byte[32];
 
     /// <summary>
+    /// Computes the slot (leaf position) for a chain in the aux merkle tree.
+    /// This is the LCG formula from Namecoin's auxpow.cpp::getExpectedIndex.
+    /// The aux daemon uses the same formula when verifying submitted AuxPoW —
+    /// so this MUST be used for both tree construction and proof serialization.
+    /// </summary>
+    /// <param name="nonce">Nonce embedded in the coinbase commitment's 4-byte nonce field</param>
+    /// <param name="chainId">The chain's registered chain ID</param>
+    /// <param name="h">log2(treeSize) — number of levels in the tree</param>
+    public static uint GetExpectedIndex(uint nonce, int chainId, int h)
+    {
+        unchecked
+        {
+            uint rand = nonce;
+            rand = rand * 1103515245u + 12345u;
+            rand += (uint) chainId;
+            rand = rand * 1103515245u + 12345u;
+            return h == 0 ? 0u : rand % (1u << h);
+        }
+    }
+
+    /// <summary>
     /// Builds the aux chain merkle tree from all active aux blocks.
-    /// Returns a flat binary-tree node array (root at index 1) and the tree size.
+    /// Returns a flat binary-tree node array (root at index 1), the tree size,
+    /// and the nonce that was chosen to give each chain a unique LCG-derived slot.
     ///
     /// nodes[1]           = root
     /// nodes[2..3]        = level 1
     /// nodes[treeSize .. 2*treeSize-1] = leaves (leaf i = aux chain at slot i, or zero)
     /// </summary>
-    public static (byte[][] nodes, int treeSize) BuildAuxTree(IReadOnlyList<AuxBlockData> activeAuxBlocks)
+    public static (byte[][] nodes, int treeSize, uint nonce) BuildAuxTree(IReadOnlyList<AuxBlockData> activeAuxBlocks)
     {
         if(activeAuxBlocks == null || activeAuxBlocks.Count == 0)
-        {
-            // Single-slot tree with zero root
-            return (new byte[][] { null!, ZeroHash, ZeroHash }, 1);
-        }
+            return (new byte[][] { null!, ZeroHash, ZeroHash }, 1, 0u);
 
-        // Find smallest power-of-2 tree size with no slot collisions
+        // Find smallest power-of-2 treeSize and a nonce such that every chain maps
+        // to a unique slot under the Namecoin LCG formula (GetExpectedIndex).
         int treeSize = NextPowerOfTwo(activeAuxBlocks.Count);
-        while(HasSlotCollision(activeAuxBlocks, treeSize))
-            treeSize <<= 1;
+        uint nonce = FindNonce(activeAuxBlocks, ref treeSize);
+        int h = Log2(treeSize);
 
         // nodes[0] unused; nodes[1]=root; leaves at nodes[treeSize..2*treeSize-1]
         var nodes = new byte[2 * treeSize][];
-        nodes[0] = ZeroHash; // unused sentinel
+        nodes[0] = ZeroHash;
 
         // Fill all leaf slots with zeros (empty slots)
         for(int i = 0; i < treeSize; i++)
             nodes[treeSize + i] = ZeroHash;
 
-        // Place each aux chain hash at its slot
-        // aux.Hash is big-endian (display/RPC format); reverse to little-endian (internal wire format)
+        // Place each aux chain hash at its LCG-derived slot.
+        // aux.Hash is big-endian (display/RPC format); reverse to little-endian (internal wire format).
         foreach(var aux in activeAuxBlocks)
         {
-            int slot = aux.ChainId % treeSize;
+            int slot = (int) GetExpectedIndex(nonce, aux.ChainId, h);
             nodes[treeSize + slot] = aux.Hash.HexToByteArray().Reverse().ToArray();
         }
 
@@ -82,22 +103,24 @@ public static class AuxPowSerializer
             nodes[i] = DoubleSHA256(combined);
         }
 
-        return (nodes, treeSize);
+        return (nodes, treeSize, nonce);
     }
 
     /// <summary>
     /// Computes the merkle branch from an aux chain's leaf to the tree root.
-    /// Returns the branch hashes and the leaf index (merkle index for AuxPoW serialization).
+    /// Returns the branch hashes and the LCG-derived leaf index for AuxPoW serialization.
     /// </summary>
-    public static (List<byte[]> branch, uint leafIndex) GetAuxMerkleBranch(byte[][]? nodes, int treeSize, int chainId)
+    /// <param name="nonce">The nonce returned by BuildAuxTree (embedded in the coinbase commitment)</param>
+    public static (List<byte[]> branch, uint leafIndex) GetAuxMerkleBranch(byte[][]? nodes, int treeSize, uint nonce, int chainId)
     {
         if(nodes == null || treeSize <= 0)
             return (new List<byte[]>(), 0u);
 
-        uint leafIndex = (uint)(chainId % treeSize);
+        int h = Log2(treeSize);
+        uint leafIndex = GetExpectedIndex(nonce, chainId, h);
         var branch = new List<byte[]>();
 
-        int idx = treeSize + (int)leafIndex; // leaf node index in array
+        int idx = treeSize + (int) leafIndex;
 
         while(idx > 1)
         {
@@ -177,13 +200,38 @@ public static class AuxPowSerializer
         return ms.ToArray().ToHexString();
     }
 
-    private static bool HasSlotCollision(IReadOnlyList<AuxBlockData> blocks, int treeSize)
+    /// <summary>
+    /// Searches for a nonce in [0, 65535] where all chains have unique LCG-derived slots.
+    /// If no nonce works at the current treeSize, doubles it and retries.
+    /// </summary>
+    private static uint FindNonce(IReadOnlyList<AuxBlockData> blocks, ref int treeSize)
     {
-        var slots = new HashSet<int>(blocks.Count);
+        while(true)
+        {
+            for(uint n = 0; n <= 65535; n++)
+            {
+                if(!HasLcgCollision(blocks, treeSize, n))
+                    return n;
+            }
+            treeSize <<= 1;
+        }
+    }
+
+    private static bool HasLcgCollision(IReadOnlyList<AuxBlockData> blocks, int treeSize, uint nonce)
+    {
+        int h = Log2(treeSize);
+        var slots = new HashSet<uint>(blocks.Count);
         foreach(var b in blocks)
-            if(!slots.Add(b.ChainId % treeSize))
+            if(!slots.Add(GetExpectedIndex(nonce, b.ChainId, h)))
                 return true;
         return false;
+    }
+
+    private static int Log2(int n)
+    {
+        int h = 0;
+        while((1 << h) < n) h++;
+        return h;
     }
 
     private static int NextPowerOfTwo(int n)

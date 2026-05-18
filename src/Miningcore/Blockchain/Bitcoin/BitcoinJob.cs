@@ -65,6 +65,7 @@ public class BitcoinJob
     // Aux chain merkle tree (built once per job from active aux blocks)
     private byte[][] auxMerkleNodes;
     private int auxMerkleTreeSize = 1;
+    private uint auxMerkleTreeNonce = 0;
 
     protected static byte[] sha256Empty = new byte[32];
     protected uint txVersion = 1u; // transaction version (currently 1) - see https://en.bitcoin.it/wiki/Transaction
@@ -154,9 +155,10 @@ public class BitcoinJob
 
             if(activeAux.Count > 0)
             {
-                var (nodes, treeSize) = AuxPowSerializer.BuildAuxTree(activeAux);
+                var (nodes, treeSize, nonce) = AuxPowSerializer.BuildAuxTree(activeAux);
                 auxMerkleNodes = nodes;
                 auxMerkleTreeSize = treeSize;
+                auxMerkleTreeNonce = nonce;
             }
         }
 
@@ -351,7 +353,7 @@ public class BitcoinJob
         if(auxMerkleNodes != null)
         {
             var rootDisplayOrder = auxMerkleNodes[1].Reverse().ToArray();
-            var commitment = AuxPowSerializer.BuildCoinbaseCommitment(rootDisplayOrder, auxMerkleTreeSize);
+            var commitment = AuxPowSerializer.BuildCoinbaseCommitment(rootDisplayOrder, auxMerkleTreeSize, auxMerkleTreeNonce);
             ops.Add(Op.GetPushOp(commitment));
         }
 
@@ -1021,6 +1023,7 @@ public class BitcoinJob
     public AuxBlockData[] AuxBlocks => auxBlocks;
     public byte[][] AuxMerkleNodes => auxMerkleNodes;
     public int AuxMerkleTreeSize => auxMerkleTreeSize;
+    public uint AuxMerkleTreeNonce => auxMerkleTreeNonce;
 
     public void Init(BlockTemplate blockTemplate, string jobId,
         PoolConfig pc, BitcoinPoolConfigExtra extraPoolConfig,

@@ -393,6 +393,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                     var (auxBranch, auxIndex) = AuxPowSerializer.GetAuxMerkleBranch(
                         submittingJob?.AuxMerkleNodes,
                         submittingJob?.AuxMerkleTreeSize ?? 1,
+                        submittingJob?.AuxMerkleTreeNonce ?? 0,
                         auxBlock.ChainId);
                     var auxPoWHex = AuxPowSerializer.BuildAuxPoWHex(coinbaseTxHex, headerBytes, merkleBranch, auxBranch, auxIndex);
 
