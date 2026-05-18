@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Security.Cryptography;
 using Miningcore.Blockchain.Bitcoin.AuxPoW;
 using Miningcore.Extensions;
 using NBitcoin;
@@ -39,6 +41,32 @@ public class AuxPowSerializerTests
         var root = MerkleRoot32(0x55);
         var result = AuxPowSerializer.BuildCoinbaseCommitment(root, treeSize: 1);
         Assert.Equal(root, result[4..36]);
+    }
+
+    [Fact]
+    public void BuildCoinbaseCommitment_DaemonCanFindRoot_AfterReversal()
+    {
+        // The aux daemon (auxpow.cpp::CAuxPow::check) reconstructs the merkle root in
+        // internal/LE byte order, then reverses it before searching the coinbase.
+        // This means BuildCoinbaseCommitment must receive the root in display/BE order
+        // (i.e. the caller must reverse nodes[1] before passing it).
+        //
+        // Test: build tree → get root in LE (nodes[1]) → reverse to BE → build commitment
+        //       → confirm the reversed root (= what the daemon will search for) appears in the commitment.
+        var hashHex = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        var (nodes, _) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1, hashHex) });
+
+        var rootLe = nodes[1]; // internal/LE byte order (direct SHA256d output)
+        var rootBe = rootLe.Reverse().ToArray(); // display/BE — what the daemon searches for
+
+        var commitment = AuxPowSerializer.BuildCoinbaseCommitment(rootBe, treeSize: 1);
+
+        // Daemon-side: search for rootBe in the script — must be found
+        var script = commitment.ToHexString();
+        Assert.Contains(rootBe.ToHexString(), script, StringComparison.OrdinalIgnoreCase);
+
+        // Regression guard: embedding rootLe (the wrong order) would NOT be found by the daemon
+        Assert.DoesNotContain(rootLe.ToHexString(), script, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -193,6 +221,186 @@ public class AuxPowSerializerTests
     {
         var config = new AuxChainConfig { PollIntervalSeconds = 30 };
         Assert.Equal(30, config.PollIntervalSeconds);
+    }
+
+    #endregion
+
+    #region BuildAuxTree
+
+    private static AuxBlockData MakeAux(int chainId, string hashHex = null)
+    {
+        hashHex ??= new string('a', 64);
+        return new AuxBlockData { Hash = hashHex, ChainId = chainId };
+    }
+
+    [Fact]
+    public void BuildAuxTree_EmptyList_ReturnsTreeSizeOne()
+    {
+        var (nodes, treeSize) = AuxPowSerializer.BuildAuxTree(new List<AuxBlockData>());
+        Assert.Equal(1, treeSize);
+        Assert.Equal(3, nodes.Length); // nodes[0..2]
+    }
+
+    [Fact]
+    public void BuildAuxTree_SingleChain_TreeSizeOne()
+    {
+        var (_, treeSize) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1) });
+        Assert.Equal(1, treeSize);
+    }
+
+    [Fact]
+    public void BuildAuxTree_SingleChain_RootIsLeafHashReversed()
+    {
+        var hashHex = new string('0', 62) + "ab"; // 32 bytes, last byte = 0xab
+        var (nodes, _) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(0, hashHex) });
+
+        // Hash reversed to LE: first byte of reversed = 0xab
+        Assert.Equal(0xab, nodes[1][0]);
+    }
+
+    [Fact]
+    public void BuildAuxTree_TwoChains_NoCollision_TreeSizeTwo()
+    {
+        // chainId=1 → slot 1, chainId=2 → slot 0 (at treeSize=2, no collision)
+        var (_, treeSize) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1), MakeAux(2) });
+        Assert.Equal(2, treeSize);
+    }
+
+    [Fact]
+    public void BuildAuxTree_TwoChains_SlotCollision_ForcesLargerTree()
+    {
+        // Both chainId=0 and chainId=2 map to slot 0 at treeSize=2 → must grow to treeSize=4
+        var (_, treeSize) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(0), MakeAux(2) });
+        Assert.Equal(4, treeSize);
+    }
+
+    [Fact]
+    public void BuildAuxTree_SpaceXpanseChainId_PlacedAtCorrectSlot()
+    {
+        // SpaceXpanse chainId=1899. At treeSize=1 (single chain), slot=0.
+        var (nodes, treeSize) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1899) });
+
+        Assert.Equal(1, treeSize);
+        Assert.NotNull(nodes[1]); // root/leaf at nodes[1]
+    }
+
+    [Fact]
+    public void BuildAuxTree_TwoChains_RootIsSHA256dOfChildren()
+    {
+        // With two chains at known hashes, verify root = SHA256d(left || right).
+        var hashA = new string('0', 62) + "cc"; // chainId=2 → slot 0 (left)
+        var hashB = new string('0', 62) + "dd"; // chainId=1 → slot 1 (right)
+
+        var auxA = MakeAux(2, hashA);
+        var auxB = MakeAux(1, hashB);
+
+        var (nodes, treeSize) = AuxPowSerializer.BuildAuxTree(new[] { auxA, auxB });
+
+        Assert.Equal(2, treeSize);
+
+        // Manually compute expected root
+        var leftLeaf = hashA.HexToByteArray().Reverse().ToArray();  // slot 0
+        var rightLeaf = hashB.HexToByteArray().Reverse().ToArray(); // slot 1
+        var combined = leftLeaf.Concat(rightLeaf).ToArray();
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        var expectedRoot = sha.ComputeHash(sha.ComputeHash(combined));
+
+        Assert.Equal(expectedRoot, nodes[1]);
+    }
+
+    [Fact]
+    public void BuildAuxTree_NodesArrayLength_Is2TimeTreeSize()
+    {
+        var (nodes, treeSize) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1), MakeAux(3) });
+        Assert.Equal(2 * treeSize, nodes.Length);
+    }
+
+    #endregion
+
+    #region GetAuxMerkleBranch
+
+    [Fact]
+    public void GetAuxMerkleBranch_NullNodes_ReturnsEmptyBranch()
+    {
+        var (branch, leafIndex) = AuxPowSerializer.GetAuxMerkleBranch(null, 1, 1);
+        Assert.Empty(branch);
+        Assert.Equal(0u, leafIndex);
+    }
+
+    [Fact]
+    public void GetAuxMerkleBranch_TreeSizeOne_EmptyBranch()
+    {
+        var (nodes, treeSize) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1899) });
+        var (branch, leafIndex) = AuxPowSerializer.GetAuxMerkleBranch(nodes, treeSize, 1899);
+
+        Assert.Empty(branch); // single-chain tree: no siblings needed
+        Assert.Equal(0u, leafIndex);
+    }
+
+    [Fact]
+    public void GetAuxMerkleBranch_TreeSizeTwo_BranchLengthOne()
+    {
+        var (nodes, treeSize) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1), MakeAux(2) });
+        var (branch, _) = AuxPowSerializer.GetAuxMerkleBranch(nodes, treeSize, 1);
+
+        Assert.Single(branch); // one sibling at each level for treeSize=2
+    }
+
+    [Fact]
+    public void GetAuxMerkleBranch_TreeSizeFour_BranchLengthTwo()
+    {
+        // 4-leaf tree → 2 levels → branch length 2
+        var (nodes, treeSize) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(0), MakeAux(2) });
+        Assert.Equal(4, treeSize);
+
+        var (branch, _) = AuxPowSerializer.GetAuxMerkleBranch(nodes, treeSize, 0);
+        Assert.Equal(2, branch.Count);
+    }
+
+    [Fact]
+    public void GetAuxMerkleBranch_LeafIndex_IsChainIdModTreeSize()
+    {
+        var (nodes, treeSize) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1), MakeAux(2) });
+        var (_, leafIndex) = AuxPowSerializer.GetAuxMerkleBranch(nodes, treeSize, 1);
+
+        Assert.Equal((uint)(1 % treeSize), leafIndex);
+    }
+
+    [Fact]
+    public void GetAuxMerkleBranch_BranchAllowsRootRecovery()
+    {
+        // Verify that applying the branch hashes to the leaf reproduces the root.
+        var hashHex = new string('0', 62) + "ee"; // chainId=1 → slot 1
+        var siblingHex = new string('0', 62) + "ff"; // chainId=2 → slot 0 (sibling)
+
+        var (nodes, treeSize) = AuxPowSerializer.BuildAuxTree(new[]
+        {
+            MakeAux(1, hashHex),
+            MakeAux(2, siblingHex)
+        });
+
+        var (branch, leafIndex) = AuxPowSerializer.GetAuxMerkleBranch(nodes, treeSize, 1);
+
+        // Reconstruct root: leaf XOR'd with sibling at each level
+        var leaf = hashHex.HexToByteArray().Reverse().ToArray();
+        var current = leaf;
+        var idx = (int) leafIndex;
+
+        using var sha = System.Security.Cryptography.SHA256.Create();
+
+        foreach(var sibling in branch)
+        {
+            byte[] combined;
+            if((idx & 1) == 0) // even index: sibling is on the right
+                combined = current.Concat(sibling).ToArray();
+            else               // odd index: sibling is on the left
+                combined = sibling.Concat(current).ToArray();
+
+            current = sha.ComputeHash(sha.ComputeHash(combined));
+            idx >>= 1;
+        }
+
+        Assert.Equal(nodes[1], current); // reconstructed root must match tree root
     }
 
     #endregion

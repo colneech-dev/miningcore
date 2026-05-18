@@ -53,6 +53,9 @@ public class PoolConfigValidationTests
             .WithErrorMessage("Pool cannot have itself (fractal) as an auxiliary coin");
     }
 
+    private static DaemonEndpointConfig[] MinimalDaemons() =>
+        new[] { new DaemonEndpointConfig { Host = "localhost", Port = 8332 } };
+
     [Fact]
     public void PoolConfig_ShouldPassWithOnlyOtherAuxCoins()
     {
@@ -61,8 +64,8 @@ public class PoolConfigValidationTests
         {
             AuxChains = new[]
             {
-                new AuxChainConfig { Id = "namecoin", Name = "Namecoin" },
-                new AuxChainConfig { Id = "elastos",  Name = "Elastos" }
+                new AuxChainConfig { Id = "namecoin", Name = "Namecoin", Daemons = MinimalDaemons() },
+                new AuxChainConfig { Id = "elastos",  Name = "Elastos",  Daemons = MinimalDaemons() }
             }
         });
 
