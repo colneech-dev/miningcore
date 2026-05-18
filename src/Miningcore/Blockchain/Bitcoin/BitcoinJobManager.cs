@@ -377,8 +377,11 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                     continue;
                 }
 
-                // Duplicate guard: two concurrent shares could both meet the aux target
-                if(!submittedAuxHashes.TryAdd(auxBlock.Hash, 1))
+                // Duplicate guard: two concurrent shares could both meet the aux target.
+                // Key is scoped to (chainId, hash) so different chains with the same block hash
+                // don't suppress each other's submission.
+                var dedupKey = $"{auxBlock.ChainId}:{auxBlock.Hash}";
+                if(!submittedAuxHashes.TryAdd(dedupKey, 1))
                 {
                     logger.Debug(() => $"Skipping duplicate aux submission for {auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]}");
                     continue;
