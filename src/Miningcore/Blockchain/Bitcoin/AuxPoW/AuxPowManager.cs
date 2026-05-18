@@ -172,15 +172,37 @@ public class AuxPowManager : IDisposable
             return false;
         }
 
-        // Some daemons return null/omit result on success; only an explicit boolean false means rejection
-        var accepted = response.Response == null
-            || response.Response.Type == JTokenType.Null
-            || (response.Response.Type == JTokenType.Boolean && response.Response.Value<bool>());
+        // Determine acceptance from the response value:
+        //   null / JNull  → accepted (Namecoin-family daemons return null on success;
+        //                   actual rejections come back as RPC errors handled above)
+        //   boolean true  → explicitly accepted
+        //   boolean false → explicitly rejected
+        //   string ""     → accepted (Bitcoin Core submitblock pattern)
+        //   string <text> → rejected, text is the rejection reason
+        bool accepted;
+        string logReason;
+
+        if(response.Response == null || response.Response.Type == JTokenType.Null)
+        {
+            accepted = true;
+            logReason = "null response";
+        }
+        else if(response.Response.Type == JTokenType.Boolean)
+        {
+            accepted = response.Response.Value<bool>();
+            logReason = accepted ? "explicit true" : "explicit false";
+        }
+        else
+        {
+            var text = response.Response.ToString();
+            accepted = string.IsNullOrEmpty(text);
+            logReason = accepted ? "empty string" : text;
+        }
 
         if(accepted)
-            logger.Info(() => $"[{config.Id}] Merged block accepted by {config.Name}!");
+            logger.Info(() => $"[{config.Id}] Merged block accepted by {config.Name} ({logReason})");
         else
-            logger.Warn(() => $"[{config.Id}] Merged block rejected by {config.Name}");
+            logger.Warn(() => $"[{config.Id}] Merged block rejected by {config.Name}: {logReason}");
 
         // Invalidate current aux block to force refresh on next share
         auxBlockInvalidated = true;
