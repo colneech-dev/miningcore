@@ -54,7 +54,7 @@ public class AuxPowSerializerTests
         // Test: build tree → get root in LE (nodes[1]) → reverse to BE → build commitment
         //       → confirm the reversed root (= what the daemon will search for) appears in the commitment.
         var hashHex = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
-        var (nodes, _) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1, hashHex) });
+        var (nodes, _, _) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1, hashHex) });
 
         var rootLe = nodes[1]; // internal/LE byte order (direct SHA256d output)
         var rootBe = rootLe.Reverse().ToArray(); // display/BE — what the daemon searches for
@@ -233,18 +233,27 @@ public class AuxPowSerializerTests
         return new AuxBlockData { Hash = hashHex, ChainId = chainId };
     }
 
+    // Compute log2 of a power-of-2 integer (used in tests to derive h from treeSize).
+    private static int TreeHeight(int treeSize)
+    {
+        int h = 0;
+        while((1 << h) < treeSize) h++;
+        return h;
+    }
+
     [Fact]
     public void BuildAuxTree_EmptyList_ReturnsTreeSizeOne()
     {
-        var (nodes, treeSize) = AuxPowSerializer.BuildAuxTree(new List<AuxBlockData>());
+        var (nodes, treeSize, nonce) = AuxPowSerializer.BuildAuxTree(new List<AuxBlockData>());
         Assert.Equal(1, treeSize);
+        Assert.Equal(0u, nonce);
         Assert.Equal(3, nodes.Length); // nodes[0..2]
     }
 
     [Fact]
     public void BuildAuxTree_SingleChain_TreeSizeOne()
     {
-        var (_, treeSize) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1) });
+        var (_, treeSize, _) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1) });
         Assert.Equal(1, treeSize);
     }
 
@@ -252,7 +261,7 @@ public class AuxPowSerializerTests
     public void BuildAuxTree_SingleChain_RootIsLeafHashReversed()
     {
         var hashHex = new string('0', 62) + "ab"; // 32 bytes, last byte = 0xab
-        var (nodes, _) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(0, hashHex) });
+        var (nodes, _, _) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(0, hashHex) });
 
         // Hash reversed to LE: first byte of reversed = 0xab
         Assert.Equal(0xab, nodes[1][0]);
@@ -261,16 +270,18 @@ public class AuxPowSerializerTests
     [Fact]
     public void BuildAuxTree_TwoChains_NoCollision_TreeSizeTwo()
     {
-        // chainId=1 → slot 1, chainId=2 → slot 0 (at treeSize=2, no collision)
-        var (_, treeSize) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1), MakeAux(2) });
+        // chainId=1 and chainId=2 must fit in a treeSize=2 tree (a valid nonce exists).
+        var (_, treeSize, _) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1), MakeAux(2) });
         Assert.Equal(2, treeSize);
     }
 
     [Fact]
-    public void BuildAuxTree_TwoChains_SlotCollision_ForcesLargerTree()
+    public void BuildAuxTree_TwoChains_LcgCollision_ForcesLargerTree()
     {
-        // Both chainId=0 and chainId=2 map to slot 0 at treeSize=2 → must grow to treeSize=4
-        var (_, treeSize) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(0), MakeAux(2) });
+        // chainId=0 and chainId=2 always collide at treeSize=2 under the LCG formula
+        // because the LCG result mod 2 is identical for chainIds differing by 2.
+        // The tree must grow to treeSize=4 where they can be separated.
+        var (_, treeSize, _) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(0), MakeAux(2) });
         Assert.Equal(4, treeSize);
     }
 
@@ -278,7 +289,7 @@ public class AuxPowSerializerTests
     public void BuildAuxTree_SpaceXpanseChainId_PlacedAtCorrectSlot()
     {
         // SpaceXpanse chainId=1899. At treeSize=1 (single chain), slot=0.
-        var (nodes, treeSize) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1899) });
+        var (nodes, treeSize, _) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1899) });
 
         Assert.Equal(1, treeSize);
         Assert.NotNull(nodes[1]); // root/leaf at nodes[1]
@@ -287,21 +298,29 @@ public class AuxPowSerializerTests
     [Fact]
     public void BuildAuxTree_TwoChains_RootIsSHA256dOfChildren()
     {
-        // With two chains at known hashes, verify root = SHA256d(left || right).
-        var hashA = new string('0', 62) + "cc"; // chainId=2 → slot 0 (left)
-        var hashB = new string('0', 62) + "dd"; // chainId=1 → slot 1 (right)
+        // Verify root = SHA256d(slotZeroLeaf || slotOneLeaf) using LCG-derived slot positions.
+        var hashA = new string('0', 62) + "cc"; // will be placed at its LCG-derived slot
+        var hashB = new string('0', 62) + "dd";
 
         var auxA = MakeAux(2, hashA);
         var auxB = MakeAux(1, hashB);
 
-        var (nodes, treeSize) = AuxPowSerializer.BuildAuxTree(new[] { auxA, auxB });
+        var (nodes, treeSize, nonce) = AuxPowSerializer.BuildAuxTree(new[] { auxA, auxB });
 
         Assert.Equal(2, treeSize);
 
-        // Manually compute expected root
-        var leftLeaf = hashA.HexToByteArray().Reverse().ToArray();  // slot 0
-        var rightLeaf = hashB.HexToByteArray().Reverse().ToArray(); // slot 1
-        var combined = leftLeaf.Concat(rightLeaf).ToArray();
+        // Determine which chain landed at slot 0 and slot 1 using the LCG.
+        int h = TreeHeight(treeSize); // h=1 for treeSize=2
+        var slotA = (int) AuxPowSerializer.GetExpectedIndex(nonce, 2, h);
+        var slotB = (int) AuxPowSerializer.GetExpectedIndex(nonce, 1, h);
+        Assert.NotEqual(slotA, slotB); // slots must be unique
+
+        // Build expected root from the actual slot assignments.
+        var leafA = hashA.HexToByteArray().Reverse().ToArray();
+        var leafB = hashB.HexToByteArray().Reverse().ToArray();
+        byte[] left  = slotA == 0 ? leafA : leafB;
+        byte[] right = slotA == 0 ? leafB : leafA;
+        var combined = left.Concat(right).ToArray();
         using var sha = System.Security.Cryptography.SHA256.Create();
         var expectedRoot = sha.ComputeHash(sha.ComputeHash(combined));
 
@@ -311,8 +330,35 @@ public class AuxPowSerializerTests
     [Fact]
     public void BuildAuxTree_NodesArrayLength_Is2TimeTreeSize()
     {
-        var (nodes, treeSize) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1), MakeAux(3) });
+        var (nodes, treeSize, _) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1), MakeAux(3) });
         Assert.Equal(2 * treeSize, nodes.Length);
+    }
+
+    [Fact]
+    public void BuildAuxTree_AllSlotsUnique_UnderLcg()
+    {
+        // Verify that no two chains occupy the same slot in the built tree.
+        var chains = new[] { MakeAux(1), MakeAux(2), MakeAux(3), MakeAux(4) };
+        var (_, treeSize, nonce) = AuxPowSerializer.BuildAuxTree(chains);
+
+        int h = TreeHeight(treeSize);
+        var slots = chains.Select(c => AuxPowSerializer.GetExpectedIndex(nonce, c.ChainId, h)).ToList();
+        Assert.Equal(slots.Count, slots.Distinct().Count());
+    }
+
+    [Fact]
+    public void BuildAuxTree_LcgNonce_MatchesCoinbaseCommitment()
+    {
+        // The nonce returned by BuildAuxTree must match what BuildCoinbaseCommitment embeds.
+        var chains = new[] { MakeAux(1), MakeAux(2) };
+        var (nodes, treeSize, nonce) = AuxPowSerializer.BuildAuxTree(chains);
+
+        var rootBe = nodes[1].Reverse().ToArray();
+        var commitment = AuxPowSerializer.BuildCoinbaseCommitment(rootBe, treeSize, nonce);
+
+        // Last 4 bytes of commitment are the nonce (little-endian).
+        var embeddedNonce = BitConverter.ToUInt32(commitment, 40);
+        Assert.Equal(nonce, embeddedNonce);
     }
 
     #endregion
@@ -322,7 +368,7 @@ public class AuxPowSerializerTests
     [Fact]
     public void GetAuxMerkleBranch_NullNodes_ReturnsEmptyBranch()
     {
-        var (branch, leafIndex) = AuxPowSerializer.GetAuxMerkleBranch(null, 1, 1);
+        var (branch, leafIndex) = AuxPowSerializer.GetAuxMerkleBranch(null, 1, 0u, 1);
         Assert.Empty(branch);
         Assert.Equal(0u, leafIndex);
     }
@@ -330,8 +376,8 @@ public class AuxPowSerializerTests
     [Fact]
     public void GetAuxMerkleBranch_TreeSizeOne_EmptyBranch()
     {
-        var (nodes, treeSize) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1899) });
-        var (branch, leafIndex) = AuxPowSerializer.GetAuxMerkleBranch(nodes, treeSize, 1899);
+        var (nodes, treeSize, nonce) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1899) });
+        var (branch, leafIndex) = AuxPowSerializer.GetAuxMerkleBranch(nodes, treeSize, nonce, 1899);
 
         Assert.Empty(branch); // single-chain tree: no siblings needed
         Assert.Equal(0u, leafIndex);
@@ -340,8 +386,8 @@ public class AuxPowSerializerTests
     [Fact]
     public void GetAuxMerkleBranch_TreeSizeTwo_BranchLengthOne()
     {
-        var (nodes, treeSize) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1), MakeAux(2) });
-        var (branch, _) = AuxPowSerializer.GetAuxMerkleBranch(nodes, treeSize, 1);
+        var (nodes, treeSize, nonce) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1), MakeAux(2) });
+        var (branch, _) = AuxPowSerializer.GetAuxMerkleBranch(nodes, treeSize, nonce, 1);
 
         Assert.Single(branch); // one sibling at each level for treeSize=2
     }
@@ -350,38 +396,39 @@ public class AuxPowSerializerTests
     public void GetAuxMerkleBranch_TreeSizeFour_BranchLengthTwo()
     {
         // 4-leaf tree → 2 levels → branch length 2
-        var (nodes, treeSize) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(0), MakeAux(2) });
+        var (nodes, treeSize, nonce) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(0), MakeAux(2) });
         Assert.Equal(4, treeSize);
 
-        var (branch, _) = AuxPowSerializer.GetAuxMerkleBranch(nodes, treeSize, 0);
+        var (branch, _) = AuxPowSerializer.GetAuxMerkleBranch(nodes, treeSize, nonce, 0);
         Assert.Equal(2, branch.Count);
     }
 
     [Fact]
-    public void GetAuxMerkleBranch_LeafIndex_IsChainIdModTreeSize()
+    public void GetAuxMerkleBranch_LeafIndex_IsLcgDerivedSlot()
     {
-        var (nodes, treeSize) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1), MakeAux(2) });
-        var (_, leafIndex) = AuxPowSerializer.GetAuxMerkleBranch(nodes, treeSize, 1);
+        // leafIndex must equal GetExpectedIndex(nonce, chainId, h) — the Namecoin LCG formula.
+        var (nodes, treeSize, nonce) = AuxPowSerializer.BuildAuxTree(new[] { MakeAux(1), MakeAux(2) });
+        var (_, leafIndex) = AuxPowSerializer.GetAuxMerkleBranch(nodes, treeSize, nonce, 1);
 
-        Assert.Equal((uint)(1 % treeSize), leafIndex);
+        int h = TreeHeight(treeSize);
+        Assert.Equal(AuxPowSerializer.GetExpectedIndex(nonce, 1, h), leafIndex);
     }
 
     [Fact]
     public void GetAuxMerkleBranch_BranchAllowsRootRecovery()
     {
         // Verify that applying the branch hashes to the leaf reproduces the root.
-        var hashHex = new string('0', 62) + "ee"; // chainId=1 → slot 1
-        var siblingHex = new string('0', 62) + "ff"; // chainId=2 → slot 0 (sibling)
+        var hashHex    = new string('0', 62) + "ee";
+        var siblingHex = new string('0', 62) + "ff";
 
-        var (nodes, treeSize) = AuxPowSerializer.BuildAuxTree(new[]
+        var (nodes, treeSize, nonce) = AuxPowSerializer.BuildAuxTree(new[]
         {
             MakeAux(1, hashHex),
             MakeAux(2, siblingHex)
         });
 
-        var (branch, leafIndex) = AuxPowSerializer.GetAuxMerkleBranch(nodes, treeSize, 1);
+        var (branch, leafIndex) = AuxPowSerializer.GetAuxMerkleBranch(nodes, treeSize, nonce, 1);
 
-        // Reconstruct root: leaf XOR'd with sibling at each level
         var leaf = hashHex.HexToByteArray().Reverse().ToArray();
         var current = leaf;
         var idx = (int) leafIndex;
@@ -391,9 +438,9 @@ public class AuxPowSerializerTests
         foreach(var sibling in branch)
         {
             byte[] combined;
-            if((idx & 1) == 0) // even index: sibling is on the right
+            if((idx & 1) == 0) // even index: current is left child
                 combined = current.Concat(sibling).ToArray();
-            else               // odd index: sibling is on the left
+            else               // odd index: current is right child
                 combined = sibling.Concat(current).ToArray();
 
             current = sha.ComputeHash(sha.ComputeHash(combined));
