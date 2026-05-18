@@ -344,9 +344,14 @@ public class BitcoinJob
 
         // Embed the aux chain merkle tree commitment built in BuildCoinbase().
         // Format: 0xfabe6d6d + merkleRoot(32) + treeSize(4LE) + nonce(4LE) = 44 bytes
+        // The root is stored internally in LE byte order (nodes[1]). The aux daemon
+        // (Namecoin auxpow.cpp::CAuxPow::check) reverses its locally-reconstructed root
+        // before searching the coinbase scriptSig, so we must embed the root in
+        // display/BE order (reversed from the internal tree representation).
         if(auxMerkleNodes != null)
         {
-            var commitment = AuxPowSerializer.BuildCoinbaseCommitment(auxMerkleNodes[1], auxMerkleTreeSize);
+            var rootDisplayOrder = auxMerkleNodes[1].Reverse().ToArray();
+            var commitment = AuxPowSerializer.BuildCoinbaseCommitment(rootDisplayOrder, auxMerkleTreeSize);
             ops.Add(Op.GetPushOp(commitment));
         }
 

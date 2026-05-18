@@ -111,6 +111,9 @@ public static class AuxPowSerializer
     /// <summary>
     /// Builds the coinbase commitment bytes to embed in the parent coinbase scriptSig.
     /// Format: 0xfabe6d6d + merkleRoot(32) + treeSize(4LE) + nonce(4LE)
+    /// <paramref name="merkleRoot"/> must be in display/big-endian byte order.
+    /// The aux daemon (auxpow.cpp::CAuxPow::check) reverses its internally-computed root
+    /// before searching the coinbase, so passing the internal/LE tree root will not be found.
     /// </summary>
     public static byte[] BuildCoinbaseCommitment(byte[] merkleRoot, int treeSize, uint nonce = 0)
     {
