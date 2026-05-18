@@ -118,13 +118,13 @@ public class AuxPowManager : IDisposable
             var block = new AuxBlockData
             {
                 Hash = response.Response["hash"]?.Value<string>(),
-                ChainId = response.Response["chainid"]?.Value<int>() ?? config.ChainId,
+                ChainId = ParseInt(response.Response["chainid"]) ?? config.ChainId,
                 PreviousBlockHash = response.Response["previousblockhash"]?.Value<string>(),
                 CoinbaseValue = response.Response["coinbasevalue"]?.Value<long>() ?? 0,
                 Bits = response.Response["bits"]?.Value<string>(),
                 Target = response.Response["target"]?.Value<string>()
                     ?? response.Response["_target"]?.Value<string>(),
-                Height = response.Response["height"]?.Value<int>() ?? 0,
+                Height = ParseInt(response.Response["height"]) ?? 0,
                 FetchedAt = DateTimeOffset.UtcNow,
             };
 
@@ -208,5 +208,18 @@ public class AuxPowManager : IDisposable
         auxBlockInvalidated = true;
 
         return accepted;
+    }
+
+    // Some daemons serialize integer fields (chainid, height) as JSON strings.
+    // This helper tolerates both int and string tokens.
+    private static int? ParseInt(JToken? token)
+    {
+        if(token == null || token.Type == JTokenType.Null)
+            return null;
+        if(token.Type == JTokenType.Integer)
+            return token.Value<int>();
+        if(token.Type == JTokenType.String && int.TryParse(token.Value<string>(), out var v))
+            return v;
+        return null;
     }
 }
