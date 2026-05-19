@@ -42,6 +42,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "x22i.h"
 #include "fresh.h"
 #include "dcrypt.h"
+#include "hashodo.h"
 #include "jh.h"
 #include "c11.h"
 #include "Lyra2RE.h"
@@ -525,4 +526,9 @@ extern "C" MODULE_API void argon2d16000_export(const char* input, char* output, 
 extern "C" MODULE_API void evohash_export(const char* input, char* output, uint32_t input_len)
 {
 	evohash_hash(input, output, input_len);
+}
+
+extern "C" MODULE_API void odocrypt_export(const char* input, char* output, uint32_t input_len, uint32_t key)
+{
+	odocrypt_hash(input, output, input_len, key);
 }

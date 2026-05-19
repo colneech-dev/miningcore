@@ -985,6 +985,38 @@
         "explorerTxLink": "https://chainz.cryptoid.info/dgb/tx.dws?{0}.htm",
         "explorerAccountLink": "https://chainz.cryptoid.info/dgb/address.dws?{0}.htm"
     },
+    "digibyte-odocrypt": {
+        "name": "Digibyte Odocrypt",
+        "canonicalName": "Digibyte",
+        "symbol": "DGB",
+        "family": "bitcoin",
+        "website": "https://digibyte.org/",
+        "market": "https://coinmarketcap.com/currencies/digibyte/",
+        "twitter": "https://x.com/digibytecoin",
+        "telegram": "https://t.me/DigiByteCoin",
+        "discord": "",
+        "coinbaseHasher": {
+            "hash": "sha256d"
+        },
+        "headerHasher": {
+            "hash": "odocrypt"
+        },
+        "blockHasher": {
+            "hash": "reverse",
+            "args": [
+                {
+                    "hash": "sha256d"
+                }
+            ]
+        },
+        "shareMultiplier": 256,
+        "blockTemplateRpcExtraParams": [
+            "odo"
+        ],
+        "explorerBlockLink": "https://chainz.cryptoid.info/dgb/block.dws?$height$.htm",
+        "explorerTxLink": "https://chainz.cryptoid.info/dgb/tx.dws?{0}.htm",
+        "explorerAccountLink": "https://chainz.cryptoid.info/dgb/address.dws?{0}.htm"
+    },
     "dogecoin": {
         "name": "Dogecoin",
         "canonicalName": "Dogecoin",
