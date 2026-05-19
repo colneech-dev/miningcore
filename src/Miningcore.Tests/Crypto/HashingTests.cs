@@ -101,7 +101,7 @@ public class HashingTests : TestBase
         hasher.Digest(testValue2, hash, 0ul);
         var result = hash.ToHexString();
 
-        Assert.Equal("REPLACE_WITH_CAPTURED_VECTOR", result);
+        Assert.Equal("a7a694a0464fad7d34b5ef3cd28a1caffd8410069e091195fb196f28b298f6dc", result);
     }
 
     [Fact]
