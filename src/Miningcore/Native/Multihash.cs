@@ -88,6 +88,9 @@ public static unsafe class Multihash
     [DllImport("libmultihash", EntryPoint = "skein2_export", CallingConvention = CallingConvention.Cdecl)]
     public static extern void skein2(byte* input, void* output, uint inputLength);
 
+    [DllImport("libmultihash", EntryPoint = "odocrypt_export", CallingConvention = CallingConvention.Cdecl)]
+    public static extern void odocrypt(byte* input, void* output, uint inputLength, uint key);
+
     [DllImport("libmultihash", EntryPoint = "groestl_export", CallingConvention = CallingConvention.Cdecl)]
     public static extern void groestl(byte* input, void* output, uint inputLength);
 
