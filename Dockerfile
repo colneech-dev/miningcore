@@ -34,7 +34,7 @@ RUN apt-get update && apt-get install -y dotnet-sdk-8.0 && apt-get clean
 
 WORKDIR /app
 COPY . .
-RUN dotnet publish -c Release --framework net8.0 -p:SkipNativeLibBuild=true
+RUN dotnet publish src/Miningcore/Miningcore.csproj -c Release --framework net8.0 -p:SkipNativeLibBuild=true
 
 # Inject pre-built native .so files alongside the binary in the build output.
 COPY --from=native-builder /native-output/*.so ./src/Miningcore/bin/Release/net8.0/
