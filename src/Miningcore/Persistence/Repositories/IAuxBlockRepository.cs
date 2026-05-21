@@ -1,0 +1,12 @@
+using System.Data;
+using Miningcore.Persistence.Model;
+
+namespace Miningcore.Persistence.Repositories;
+
+public interface IAuxBlockRepository
+{
+    Task<bool> InsertAsync(IDbConnection con, IDbTransaction tx, AuxBlock block);
+    Task<AuxBlock[]> PageAuxBlocksAsync(IDbConnection con, BlockStatus[] status, int page, int pageSize, CancellationToken ct);
+    Task<AuxBlock[]> PagePoolAuxBlocksAsync(IDbConnection con, string poolId, BlockStatus[] status, int page, int pageSize, CancellationToken ct);
+    Task<AuxBlock[]> PageMinerAuxBlocksAsync(IDbConnection con, string poolId, string address, BlockStatus[] status, int page, int pageSize, CancellationToken ct);
+}

@@ -8,6 +8,7 @@ using Miningcore.Persistence.Repositories;
 using Miningcore.Time;
 using System.Collections.Concurrent;
 using System.Globalization;
+using NLog;
 
 namespace Miningcore.Api.Controllers;
 
@@ -19,14 +20,17 @@ public class ClusterApiController : ApiControllerBase
     {
         statsRepo = ctx.Resolve<IStatsRepository>();
         blocksRepo = ctx.Resolve<IBlockRepository>();
+        auxBlocksRepo = ctx.Resolve<IAuxBlockRepository>();
         paymentsRepo = ctx.Resolve<IPaymentRepository>();
         clock = ctx.Resolve<IMasterClock>();
         pools = ctx.Resolve<ConcurrentDictionary<string, IMiningPool>>();
         enabledPools = new HashSet<string>(clusterConfig.Pools.Where(x => x.Enabled).Select(x => x.Id));
     }
 
+    private static readonly ILogger logger = LogManager.GetCurrentClassLogger();
     private readonly IStatsRepository statsRepo;
     private readonly IBlockRepository blocksRepo;
+    private readonly IAuxBlockRepository auxBlocksRepo;
     private readonly IPaymentRepository paymentsRepo;
     private readonly IMasterClock clock;
     private readonly ConcurrentDictionary<string, IMiningPool> pools;
@@ -79,6 +83,21 @@ public class ClusterApiController : ApiControllerBase
         }
 
         return blocks;
+    }
+
+    [HttpGet("auxblocks")]
+    public async Task<Responses.AuxBlock[]> PageAuxBlocksAsync(
+        [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
+    {
+        var ct = HttpContext.RequestAborted;
+        var blockStates = state is { Length: > 0 } ?
+            state :
+            new[] { BlockStatus.Confirmed, BlockStatus.Pending, BlockStatus.Orphaned };
+
+        return (await cf.Run(con => auxBlocksRepo.PageAuxBlocksAsync(con, blockStates, page, pageSize, ct)))
+            .Select(mapper.Map<Responses.AuxBlock>)
+            .Where(x => enabledPools.Contains(x.PoolId))
+            .ToArray();
     }
 
     #endregion // Actions

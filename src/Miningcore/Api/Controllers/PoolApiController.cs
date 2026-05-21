@@ -28,6 +28,7 @@ public class PoolApiController : ApiControllerBase
     {
         statsRepo = ctx.Resolve<IStatsRepository>();
         blocksRepo = ctx.Resolve<IBlockRepository>();
+        auxBlocksRepo = ctx.Resolve<IAuxBlockRepository>();
         minerRepo = ctx.Resolve<IMinerRepository>();
         shareRepo = ctx.Resolve<IShareRepository>();
         paymentsRepo = ctx.Resolve<IPaymentRepository>();
@@ -38,6 +39,7 @@ public class PoolApiController : ApiControllerBase
 
     private readonly IStatsRepository statsRepo;
     private readonly IBlockRepository blocksRepo;
+    private readonly IAuxBlockRepository auxBlocksRepo;
     private readonly IPaymentRepository paymentsRepo;
     private readonly IMinerRepository minerRepo;
     private readonly IShareRepository shareRepo;
@@ -832,5 +834,40 @@ public class PoolApiController : ApiControllerBase
         // map
         var result = mapper.Map<Responses.WorkerPerformanceStatsContainer[]>(stats);
         return result;
+    }
+
+    [HttpGet("{poolId}/auxblocks")]
+    public async Task<Responses.AuxBlock[]> PagePoolAuxBlocksAsync(
+        string poolId, [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
+    {
+        GetPool(poolId);
+        var ct = HttpContext.RequestAborted;
+
+        var blockStates = state is { Length: > 0 } ?
+            state :
+            new[] { BlockStatus.Confirmed, BlockStatus.Pending, BlockStatus.Orphaned };
+
+        return (await cf.Run(con => auxBlocksRepo.PagePoolAuxBlocksAsync(con, poolId, blockStates, page, pageSize, ct)))
+            .Select(mapper.Map<Responses.AuxBlock>)
+            .ToArray();
+    }
+
+    [HttpGet("{poolId}/miners/{address}/auxblocks")]
+    public async Task<Responses.AuxBlock[]> PageMinerAuxBlocksAsync(
+        string poolId, string address, [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
+    {
+        GetPool(poolId);
+        var ct = HttpContext.RequestAborted;
+
+        if(string.IsNullOrEmpty(address))
+            throw new ApiException("Invalid or missing miner address", System.Net.HttpStatusCode.NotFound);
+
+        var blockStates = state is { Length: > 0 } ?
+            state :
+            new[] { BlockStatus.Confirmed, BlockStatus.Pending, BlockStatus.Orphaned };
+
+        return (await cf.Run(con => auxBlocksRepo.PageMinerAuxBlocksAsync(con, poolId, address, blockStates, page, pageSize, ct)))
+            .Select(mapper.Map<Responses.AuxBlock>)
+            .ToArray();
     }
 }
