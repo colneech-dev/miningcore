@@ -56,6 +56,7 @@ public class AutoMapperProfile : Profile
         CreateMap<PoolStats, Api.Responses.PoolInfo>();
         CreateMap<PoolStats, Api.Responses.AggregatedPoolStats>();
         CreateMap<Block, Api.Responses.Block>();
+        CreateMap<AuxBlock, Api.Responses.AuxBlock>();
         CreateMap<MinerSettings, Api.Responses.MinerSettings>();
         CreateMap<Payment, Api.Responses.Payment>();
         CreateMap<BalanceChange, Api.Responses.BalanceChange>();
@@ -74,6 +75,7 @@ public class AutoMapperProfile : Profile
         // PostgreSQL
         CreateMap<Persistence.Model.Share, Persistence.Postgres.Entities.Share>();
         CreateMap<Block, Persistence.Postgres.Entities.Block>();
+        CreateMap<AuxBlock, Persistence.Postgres.Entities.AuxBlock>();
         CreateMap<Balance, Persistence.Postgres.Entities.Balance>();
         CreateMap<Payment, Persistence.Postgres.Entities.Payment>();
         CreateMap<MinerSettings, Persistence.Postgres.Entities.MinerSettings>();
@@ -91,6 +93,7 @@ public class AutoMapperProfile : Profile
         // PostgreSQL
         CreateMap<Persistence.Postgres.Entities.Share, Persistence.Model.Share>();
         CreateMap<Persistence.Postgres.Entities.Block, Block>();
+        CreateMap<Persistence.Postgres.Entities.AuxBlock, AuxBlock>();
         CreateMap<Persistence.Postgres.Entities.Balance, Balance>();
         CreateMap<Persistence.Postgres.Entities.Payment, Payment>();
         CreateMap<Persistence.Postgres.Entities.BalanceChange, BalanceChange>();

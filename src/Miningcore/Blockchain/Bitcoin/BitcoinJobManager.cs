@@ -1,4 +1,5 @@
 using Autofac;
+using AutoMapper;
 using Miningcore.Blockchain.Bitcoin.Configuration;
 using Miningcore.Blockchain.Bitcoin.DaemonResponses;
 using Miningcore.Blockchain.Bitcoin.Custom;
@@ -8,6 +9,8 @@ using Miningcore.Crypto;
 using Miningcore.Extensions;
 using Miningcore.JsonRpc;
 using Miningcore.Messaging;
+using Miningcore.Persistence;
+using Miningcore.Persistence.Repositories;
 using Miningcore.Rpc;
 using Miningcore.Stratum;
 using Miningcore.Time;
@@ -33,6 +36,17 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
 
     private BitcoinTemplate coin;
     private readonly ConcurrentDictionary<string, byte> submittedAuxHashes = new(StringComparer.OrdinalIgnoreCase);
+    private IConnectionFactory cf;
+    private IAuxBlockRepository auxBlockRepo;
+    private IMapper auxMapper;
+
+    private void EnsureAuxPersistence()
+    {
+        if(cf != null) return;
+        cf = ctx.Resolve<IConnectionFactory>();
+        auxBlockRepo = ctx.Resolve<IAuxBlockRepository>();
+        auxMapper = ctx.Resolve<IMapper>();
+    }
 
     protected override object[] GetBlockTemplateParams()
     {
@@ -401,7 +415,39 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                     var auxPoWHex = AuxPowSerializer.BuildAuxPoWHex(coinbaseTxHex, headerBytes, merkleBranch, auxBranch, auxIndex);
 
                     logger.Info(() => $"AuxPoW [{manager.Config.Id}] hash={auxBlock.Hash} treeSize={submittingJob?.AuxMerkleTreeSize} auxIndex={auxIndex} auxBranchLen={auxBranch.Count} coinbaseBranchLen={merkleBranch.Count} auxPoW={auxPoWHex}");
-                    await manager.SubmitAuxBlockAsync(auxBlock.Hash, auxPoWHex, ct);
+                    var auxAccepted = await manager.SubmitAuxBlockAsync(auxBlock.Hash, auxPoWHex, ct);
+
+                    if(auxAccepted)
+                    {
+                        try
+                        {
+                            EnsureAuxPersistence();
+
+                            var record = new Persistence.Model.AuxBlock
+                            {
+                                PoolId = poolConfig.Id,
+                                ChainId = manager.Config.Id,
+                                ChainName = manager.Config.Name,
+                                BlockHeight = auxBlock.Height > 0 ? (ulong?)auxBlock.Height : null,
+                                AuxBlockHash = auxBlock.Hash,
+                                ParentBlockHash = share.BlockHash,
+                                Status = Persistence.Model.BlockStatus.Pending,
+                                ConfirmationProgress = 0,
+                                Reward = auxBlock.CoinbaseValue > 0 ? (decimal)auxBlock.CoinbaseValue / 100_000_000m : null,
+                                Miner = share.Miner,
+                                Worker = share.Worker,
+                                Source = clusterConfig.ClusterName,
+                                SubmittedVia = "live",
+                                Created = clock.Now,
+                            };
+
+                            await cf.RunTx(async (con, tx) => await auxBlockRepo.InsertAsync(con, tx, record));
+                        }
+                        catch(Exception ex)
+                        {
+                            logger.Error(ex, () => $"Failed to persist aux block {auxBlock.Hash} for {manager.Config.Name}");
+                        }
+                    }
                 }
                 catch(Exception ex)
                 {
