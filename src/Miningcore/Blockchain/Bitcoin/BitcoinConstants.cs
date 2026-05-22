@@ -149,6 +149,7 @@ public static class BitcoinCommands
     public const string GetBlockSubsidy = "getblocksubsidy";
     public const string SubmitBlock = "submitblock";
     public const string GetBlockchainInfo = "getblockchaininfo";
+    public const string GetBlockCount = "getblockcount";
     public const string GetBlock = "getblock";
     public const string GetTransaction = "gettransaction";
     public const string SendMany = "sendmany";

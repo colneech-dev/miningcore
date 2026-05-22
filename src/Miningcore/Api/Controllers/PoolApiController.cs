@@ -883,18 +883,18 @@ public class PoolApiController : ApiControllerBase
         if(bitcoinExtra?.AuxChains == null || bitcoinExtra.AuxChains.Length == 0)
             return;
 
-        var linkMap = bitcoinExtra.AuxChains
-            .Where(a => !string.IsNullOrEmpty(a.ExplorerBlockLink))
-            .ToDictionary(a => a.Id, a => a.ExplorerBlockLink, StringComparer.OrdinalIgnoreCase);
-
-        if(linkMap.Count == 0) return;
+        var chainMap = bitcoinExtra.AuxChains
+            .ToDictionary(a => a.Id, a => a, StringComparer.OrdinalIgnoreCase);
 
         foreach(var block in blocks)
         {
-            if(block.AuxBlockHash == null || !linkMap.TryGetValue(block.ChainId ?? "", out var template))
+            if(!chainMap.TryGetValue(block.ChainId ?? "", out var chainCfg))
                 continue;
 
-            block.InfoLink = template.Replace("{hash}", block.AuxBlockHash);
+            block.RequiredConfirmations = chainCfg.RequiredConfirmations > 0 ? chainCfg.RequiredConfirmations : 100;
+
+            if(block.AuxBlockHash != null && !string.IsNullOrEmpty(chainCfg.ExplorerBlockLink))
+                block.InfoLink = chainCfg.ExplorerBlockLink.Replace("{hash}", block.AuxBlockHash);
         }
     }
 }

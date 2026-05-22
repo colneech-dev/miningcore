@@ -10,5 +10,6 @@ public interface IAuxBlockRepository
     Task<AuxBlock[]> PagePoolAuxBlocksAsync(IDbConnection con, string poolId, BlockStatus[] status, int page, int pageSize, CancellationToken ct);
     Task<AuxBlock[]> PageMinerAuxBlocksAsync(IDbConnection con, string poolId, string address, BlockStatus[] status, int page, int pageSize, CancellationToken ct);
     Task<AuxBlock[]> GetPendingAsync(IDbConnection con, string poolId, string chainId, int limit, CancellationToken ct);
+    Task<AuxBlock[]> GetBlocksWithoutHeightAsync(IDbConnection con, string poolId, string chainId, int limit, CancellationToken ct);
     Task UpdateAsync(IDbConnection con, IDbTransaction tx, AuxBlock block);
 }
