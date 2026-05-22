@@ -840,23 +840,26 @@ public class PoolApiController : ApiControllerBase
     public async Task<Responses.AuxBlock[]> PagePoolAuxBlocksAsync(
         string poolId, [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
     {
-        GetPool(poolId);
+        var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
         var blockStates = state is { Length: > 0 } ?
             state :
             new[] { BlockStatus.Confirmed, BlockStatus.Pending, BlockStatus.Orphaned };
 
-        return (await cf.Run(con => auxBlocksRepo.PagePoolAuxBlocksAsync(con, poolId, blockStates, page, pageSize, ct)))
+        var blocks = (await cf.Run(con => auxBlocksRepo.PagePoolAuxBlocksAsync(con, poolId, blockStates, page, pageSize, ct)))
             .Select(mapper.Map<Responses.AuxBlock>)
             .ToArray();
+
+        EnrichAuxBlockInfoLinks(pool, blocks);
+        return blocks;
     }
 
     [HttpGet("{poolId}/miners/{address}/auxblocks")]
     public async Task<Responses.AuxBlock[]> PageMinerAuxBlocksAsync(
         string poolId, string address, [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
     {
-        GetPool(poolId);
+        var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
         if(string.IsNullOrEmpty(address))
@@ -866,8 +869,32 @@ public class PoolApiController : ApiControllerBase
             state :
             new[] { BlockStatus.Confirmed, BlockStatus.Pending, BlockStatus.Orphaned };
 
-        return (await cf.Run(con => auxBlocksRepo.PageMinerAuxBlocksAsync(con, poolId, address, blockStates, page, pageSize, ct)))
+        var blocks = (await cf.Run(con => auxBlocksRepo.PageMinerAuxBlocksAsync(con, poolId, address, blockStates, page, pageSize, ct)))
             .Select(mapper.Map<Responses.AuxBlock>)
             .ToArray();
+
+        EnrichAuxBlockInfoLinks(pool, blocks);
+        return blocks;
+    }
+
+    private static void EnrichAuxBlockInfoLinks(Configuration.PoolConfig pool, Responses.AuxBlock[] blocks)
+    {
+        var bitcoinExtra = pool.Extra?.SafeExtensionDataAs<Blockchain.Bitcoin.Configuration.BitcoinPoolConfigExtra>();
+        if(bitcoinExtra?.AuxChains == null || bitcoinExtra.AuxChains.Length == 0)
+            return;
+
+        var linkMap = bitcoinExtra.AuxChains
+            .Where(a => !string.IsNullOrEmpty(a.ExplorerBlockLink))
+            .ToDictionary(a => a.Id, a => a.ExplorerBlockLink, StringComparer.OrdinalIgnoreCase);
+
+        if(linkMap.Count == 0) return;
+
+        foreach(var block in blocks)
+        {
+            if(block.AuxBlockHash == null || !linkMap.TryGetValue(block.ChainId ?? "", out var template))
+                continue;
+
+            block.InfoLink = template.Replace("{hash}", block.AuxBlockHash);
+        }
     }
 }
