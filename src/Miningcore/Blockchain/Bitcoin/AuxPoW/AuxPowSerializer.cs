@@ -160,10 +160,10 @@ public static class AuxPowSerializer
     /// can verify the chain's position in the multi-chain merkle tree.
     /// </summary>
     /// <param name="parentCoinbaseTxHex">Full serialized parent coinbase transaction (hex)</param>
-    /// <param name="parentHeaderBytes">80-byte parent block header</param>
+    /// <param name="parentHeaderBytes">80-byte parent block header (serialised Bitcoin header format)</param>
     /// <param name="coinbaseBranch">Merkle branch from coinbase to parent block merkle root</param>
-    /// <param name="auxBranch">Merkle branch from aux chain leaf to aux tree root (empty for single-chain tree)</param>
-    /// <param name="auxIndex">Leaf position of this aux chain in the aux tree (chainId % treeSize)</param>
+    /// <param name="auxBranch">Merkle branch from aux chain leaf to aux tree root using Namecoin LCG slot assignment</param>
+    /// <param name="auxIndex">Leaf slot of this aux chain determined by FindNonce LCG (not simple chainId % treeSize)</param>
     /// <returns>Hex-encoded AuxPoW proof</returns>
     public static string BuildAuxPoWHex(
         string parentCoinbaseTxHex,
@@ -172,6 +172,9 @@ public static class AuxPowSerializer
         List<byte[]>? auxBranch = null,
         uint auxIndex = 0)
     {
+        if(parentHeaderBytes.Length != 80)
+            throw new ArgumentException($"Parent block header must be exactly 80 bytes, got {parentHeaderBytes.Length}", nameof(parentHeaderBytes));
+
         var coinbaseTxBytes = parentCoinbaseTxHex.HexToByteArray();
 
         using var ms = new MemoryStream();
