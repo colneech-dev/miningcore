@@ -444,7 +444,9 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                                 Created = clock.Now,
                             };
 
-                            await cf.RunTx(async (con, tx) => await auxBlockRepo.InsertAsync(con, tx, record));
+                            _ = cf.RunTx(async (con, tx) => await auxBlockRepo.InsertAsync(con, tx, record))
+                                .ContinueWith(t => logger.Error(t.Exception, () => $"Failed to persist aux block {auxBlock.Hash} for {manager.Config.Name}"),
+                                    TaskContinuationOptions.OnlyOnFaulted);
                         }
                         catch(Exception ex)
                         {

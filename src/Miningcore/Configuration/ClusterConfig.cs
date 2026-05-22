@@ -1243,6 +1243,12 @@ public partial class ApiConfig
     public string[] AdminIpWhitelist { get; set; }
 
     /// <summary>
+    /// Optional bearer token required for all /api/admin requests.
+    /// If null or empty, token checking is disabled (IP whitelist only).
+    /// </summary>
+    public string AdminToken { get; set; }
+
+    /// <summary>
     /// Restricts access to the /metrics endpoint to these IP addresses
     /// If this list null or empty, the default is 127.0.0.1
     /// </summary>
