@@ -91,12 +91,25 @@ public class AuxBlockRepository : IAuxBlockRepository
             .ToArray();
     }
 
+    public async Task<AuxBlock[]> GetBlocksWithoutHeightAsync(IDbConnection con, string poolId, string chainId, int limit, CancellationToken ct)
+    {
+        const string query = @"SELECT * FROM auxblocks WHERE poolid = @poolId AND chainid = @chainId
+            AND blockheight IS NULL ORDER BY created ASC LIMIT @limit";
+
+        return (await con.QueryAsync<Entities.AuxBlock>(new CommandDefinition(query, new
+        {
+            poolId, chainId, limit
+        }, cancellationToken: ct)))
+            .Select(mapper.Map<AuxBlock>)
+            .ToArray();
+    }
+
     public async Task UpdateAsync(IDbConnection con, IDbTransaction tx, AuxBlock block)
     {
         var mapped = mapper.Map<Entities.AuxBlock>(block);
 
-        const string query = @"UPDATE auxblocks SET status = @status, confirmationprogress = @confirmationprogress
-            WHERE id = @id";
+        const string query = @"UPDATE auxblocks SET status = @status, confirmationprogress = @confirmationprogress,
+            blockheight = @blockheight WHERE id = @id";
 
         await con.ExecuteAsync(query, mapped, tx);
     }

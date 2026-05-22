@@ -502,13 +502,22 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                 var auxRpc = new RpcClient(config.Daemons.First(), jsonSerializerSettings, messageBus, config.Id);
 
                 var chainInfoResult = await auxRpc.ExecuteAsync<BlockchainInfo>(logger, BitcoinCommands.GetBlockchainInfo, ct);
+                long currentHeight;
                 if(chainInfoResult.Error != null || chainInfoResult.Response == null)
                 {
-                    logger.Warn(() => $"[aux-confirm] [{config.Id}] Could not get chain info: {chainInfoResult.Error?.Message}");
-                    continue;
+                    // Fallback for daemons that don't support getblockchaininfo (e.g. Elastos)
+                    var countResult = await auxRpc.ExecuteAsync<JToken>(logger, BitcoinCommands.GetBlockCount, ct);
+                    if(countResult.Error != null || countResult.Response == null)
+                    {
+                        logger.Warn(() => $"[aux-confirm] [{config.Id}] Could not get chain height: {countResult.Error?.Message}");
+                        continue;
+                    }
+                    currentHeight = countResult.Response.Value<long>();
                 }
-
-                var currentHeight = chainInfoResult.Response.Blocks;
+                else
+                {
+                    currentHeight = chainInfoResult.Response.Blocks;
+                }
                 var pending = await cf.Run(con => auxBlockRepo.GetPendingAsync(con, poolConfig.Id, config.Id, 200, ct));
 
                 foreach(var block in pending)
@@ -548,6 +557,18 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                     }
 
                     await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
+                }
+
+                // Heal backfill blocks that are missing blockHeight
+                var noHeight = await cf.Run(con => auxBlockRepo.GetBlocksWithoutHeightAsync(con, poolConfig.Id, config.Id, 50, ct));
+                foreach(var block in noHeight)
+                {
+                    if(string.IsNullOrEmpty(block.AuxBlockHash)) continue;
+                    var blockResult = await auxRpc.ExecuteAsync<DaemonResponses.Block>(logger, BitcoinCommands.GetBlock, ct, new object[] { block.AuxBlockHash, 1 });
+                    if(blockResult.Error != null || blockResult.Response == null) continue;
+                    block.BlockHeight = blockResult.Response.Height;
+                    await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
+                    logger.Info(() => $"[aux-confirm] [{config.Id}] Healed missing height for {block.AuxBlockHash[..Math.Min(8, block.AuxBlockHash.Length)]}… → {block.BlockHeight}");
                 }
             }
             catch(Exception ex)
