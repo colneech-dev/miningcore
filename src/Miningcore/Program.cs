@@ -222,6 +222,26 @@ public class Program : BackgroundService
                         {
                             "/api/admin"
                         }, clusterConfig.Api?.AdminIpWhitelist);
+
+                        var adminToken = clusterConfig.Api?.AdminToken;
+                        if(!string.IsNullOrEmpty(adminToken))
+                        {
+                            app.Use(async (context, next) =>
+                            {
+                                if(context.Request.Path.StartsWithSegments("/api/admin"))
+                                {
+                                    var auth = context.Request.Headers["Authorization"].ToString();
+                                    var expected = $"Bearer {adminToken}";
+                                    if(!string.Equals(auth, expected, StringComparison.Ordinal))
+                                    {
+                                        context.Response.StatusCode = 401;
+                                        await context.Response.WriteAsync("Unauthorized");
+                                        return;
+                                    }
+                                }
+                                await next();
+                            });
+                        }
                         UseIpWhiteList(app, true, new[]
                         {
                             "/metrics"

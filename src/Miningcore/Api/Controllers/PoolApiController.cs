@@ -6,6 +6,7 @@ using Autofac;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ActionConstraints;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
+using Microsoft.Extensions.Caching.Memory;
 using Miningcore.Api.Extensions;
 using Miningcore.Api.Responses;
 using Miningcore.Blockchain;
@@ -34,6 +35,7 @@ public class PoolApiController : ApiControllerBase
         paymentsRepo = ctx.Resolve<IPaymentRepository>();
         clock = ctx.Resolve<IMasterClock>();
         pools = ctx.Resolve<ConcurrentDictionary<string, IMiningPool>>();
+        cache = ctx.Resolve<IMemoryCache>();
         adcp = _adcp;
     }
 
@@ -46,6 +48,7 @@ public class PoolApiController : ApiControllerBase
     private readonly IMasterClock clock;
     private readonly IActionDescriptorCollectionProvider adcp;
     private readonly ConcurrentDictionary<string, IMiningPool> pools;
+    private readonly IMemoryCache cache;
 
     private static readonly ILogger logger = LogManager.GetCurrentClassLogger();
 
@@ -54,6 +57,10 @@ public class PoolApiController : ApiControllerBase
     [HttpGet]
     public async Task<GetPoolsResponse> Get(CancellationToken ct, [FromQuery] uint topMinersRange = 24)
     {
+        var cacheKey = $"pools-summary-{topMinersRange}";
+        if(cache.TryGetValue(cacheKey, out GetPoolsResponse cached))
+            return cached;
+
         var response = new GetPoolsResponse
         {
             Pools = await Task.WhenAll(clusterConfig.Pools.Where(x => x.Enabled).Select(async config =>
@@ -103,6 +110,7 @@ public class PoolApiController : ApiControllerBase
             }).ToArray())
         };
 
+        cache.Set(cacheKey, response, TimeSpan.FromSeconds(15));
         return response;
     }
 
