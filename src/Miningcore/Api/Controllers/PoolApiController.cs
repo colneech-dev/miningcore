@@ -923,6 +923,13 @@ public class PoolApiController : ApiControllerBase
                     .ToArray();
             }
 
+            var auxBlocksToday = mergeMinedCoins != null
+                ? await cf.Run(con => auxBlocksRepo.GetPoolAuxBlockCountSinceAsync(con, config.Id, todayUtc, ct))
+                : 0;
+            var totalAuxBlocks = mergeMinedCoins != null
+                ? await cf.Run(con => auxBlocksRepo.GetPoolAuxBlockCountAsync(con, config.Id, ct))
+                : 0;
+
             return new SummaryPoolEntry
             {
                 Id = config.Id,
@@ -943,6 +950,8 @@ public class PoolApiController : ApiControllerBase
                 },
                 BlocksToday = blocksToday,
                 TotalBlocks = totalBlocks,
+                AuxBlocksToday = auxBlocksToday,
+                TotalAuxBlocks = totalAuxBlocks,
                 Fee = config.RewardRecipients != null ? (float) config.RewardRecipients.Sum(x => x.Percentage) : 0,
                 MinimumPayment = config.PaymentProcessing?.MinimumPayment ?? 0,
                 MergeMinedCoins = mergeMinedCoins
@@ -957,7 +966,9 @@ public class PoolApiController : ApiControllerBase
             ActivePools = poolEntries.Count(p => p.ConnectedMiners > 0),
             PoolCount = poolEntries.Length,
             TotalBlocksAllTime = poolEntries.Sum(p => (long) p.TotalBlocks),
-            TotalBlocksToday = poolEntries.Sum(p => p.BlocksToday)
+            TotalBlocksToday = poolEntries.Sum(p => p.BlocksToday),
+            TotalAuxBlocksAllTime = poolEntries.Sum(p => p.TotalAuxBlocks),
+            TotalAuxBlocksToday = poolEntries.Sum(p => p.AuxBlocksToday)
         };
 
         var response = new GetSummaryResponse

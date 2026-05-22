@@ -28,6 +28,8 @@ public class SummaryPoolEntry
     public SummaryPoolCoin Coin { get; set; }
     public int BlocksToday { get; set; }
     public uint TotalBlocks { get; set; }
+    public int AuxBlocksToday { get; set; }
+    public int TotalAuxBlocks { get; set; }
     public float Fee { get; set; }
     public decimal MinimumPayment { get; set; }
     public SummaryMergeMineEntry[] MergeMinedCoins { get; set; }
@@ -42,6 +44,8 @@ public class SummaryTotals
     public int PoolCount { get; set; }
     public long TotalBlocksAllTime { get; set; }
     public int TotalBlocksToday { get; set; }
+    public int TotalAuxBlocksAllTime { get; set; }
+    public int TotalAuxBlocksToday { get; set; }
 }
 
 public class GetSummaryResponse
