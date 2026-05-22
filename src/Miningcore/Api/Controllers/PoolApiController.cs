@@ -885,6 +885,93 @@ public class PoolApiController : ApiControllerBase
         return blocks;
     }
 
+    [HttpGet("/api/summary")]
+    public async Task<GetSummaryResponse> GetSummaryAsync(CancellationToken ct)
+    {
+        const string cacheKey = "api-summary";
+        if(cache.TryGetValue(cacheKey, out GetSummaryResponse cached))
+            return cached;
+
+        var todayUtc = DateTime.UtcNow.Date;
+
+        var poolEntries = await Task.WhenAll(clusterConfig.Pools.Where(x => x.Enabled).Select(async config =>
+        {
+            var stats = await cf.Run(con => statsRepo.GetLastPoolStatsAsync(con, config.Id, ct));
+            pools.TryGetValue(config.Id, out var poolInstance);
+
+            var totalBlocks = await cf.Run(con => blocksRepo.GetPoolBlockCountAsync(con, config.Id, ct));
+            var blocksToday = await cf.Run(con => blocksRepo.GetPoolBlockCountSinceAsync(con, config.Id, todayUtc, ct));
+            var lastBlockTime = await cf.Run(con => blocksRepo.GetLastPoolBlockTimeAsync(con, config.Id, ct));
+            var blockReward = await cf.Run(con => blocksRepo.GetLastConfirmedBlockRewardAsync(con, config.Id, ct));
+            if(blockReward == 0 && poolInstance != null)
+                blockReward = poolInstance.NetworkStats?.BlockReward ?? 0;
+
+            double? poolEffort = null;
+            if(lastBlockTime.HasValue && poolInstance != null)
+            {
+                var effort = await cf.Run(con => shareRepo.GetEffortBetweenCreatedAsync(con, config.Id, poolInstance.ShareMultiplier, lastBlockTime.Value, clock.Now, ct));
+                if(effort.HasValue)
+                    poolEffort = effort.Value;
+            }
+
+            SummaryMergeMineEntry[] mergeMinedCoins = null;
+            var bitcoinExtra = config.Extra?.SafeExtensionDataAs<Blockchain.Bitcoin.Configuration.BitcoinPoolConfigExtra>();
+            if(bitcoinExtra?.AuxChains is { Length: > 0 })
+            {
+                mergeMinedCoins = bitcoinExtra.AuxChains
+                    .Select(a => new SummaryMergeMineEntry { Id = a.Id, Name = a.Name ?? a.Id })
+                    .ToArray();
+            }
+
+            return new SummaryPoolEntry
+            {
+                Id = config.Id,
+                Scheme = config.PaymentProcessing?.PayoutScheme.ToString(),
+                ConnectedMiners = stats?.ConnectedMiners ?? 0,
+                ConnectedWorkers = stats?.ConnectedWorkers ?? 0,
+                PoolHashrate = stats?.PoolHashrate ?? 0,
+                NetworkHashrate = stats?.NetworkHashrate ?? 0,
+                NetworkDifficulty = stats?.NetworkDifficulty ?? 0,
+                BlockHeight = stats?.BlockHeight ?? 0,
+                PoolEffort = poolEffort,
+                LastPoolBlockTime = lastBlockTime,
+                BlockReward = blockReward,
+                Coin = new SummaryPoolCoin
+                {
+                    Symbol = config.Template?.Symbol,
+                    Algorithm = config.Template?.GetAlgorithmName()
+                },
+                BlocksToday = blocksToday,
+                TotalBlocks = totalBlocks,
+                Fee = config.RewardRecipients != null ? (float) config.RewardRecipients.Sum(x => x.Percentage) : 0,
+                MinimumPayment = config.PaymentProcessing?.MinimumPayment ?? 0,
+                MergeMinedCoins = mergeMinedCoins
+            };
+        }).ToArray());
+
+        var totals = new SummaryTotals
+        {
+            TotalHashrate = poolEntries.Sum(p => p.PoolHashrate),
+            TotalMiners = poolEntries.Sum(p => p.ConnectedMiners),
+            TotalWorkers = poolEntries.Sum(p => p.ConnectedWorkers),
+            ActivePools = poolEntries.Count(p => p.ConnectedMiners > 0),
+            PoolCount = poolEntries.Length,
+            TotalBlocksAllTime = poolEntries.Sum(p => (long) p.TotalBlocks),
+            TotalBlocksToday = poolEntries.Sum(p => p.BlocksToday)
+        };
+
+        var response = new GetSummaryResponse
+        {
+            GeneratedAt = clock.Now,
+            Stale = false,
+            Pools = poolEntries,
+            Totals = totals
+        };
+
+        cache.Set(cacheKey, response, TimeSpan.FromSeconds(15));
+        return response;
+    }
+
     private static void EnrichAuxBlockInfoLinks(Configuration.PoolConfig pool, Responses.AuxBlock[] blocks)
     {
         var bitcoinExtra = pool.Extra?.SafeExtensionDataAs<Blockchain.Bitcoin.Configuration.BitcoinPoolConfigExtra>();
