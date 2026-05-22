@@ -42,14 +42,12 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
     private readonly Dictionary<string, RpcClient> auxRpcClients = new();
     private IConnectionFactory cf;
     private IAuxBlockRepository auxBlockRepo;
-    private IMapper auxMapper;
 
     private void EnsureAuxPersistence()
     {
         if(cf != null) return;
         cf = ctx.Resolve<IConnectionFactory>();
         auxBlockRepo = ctx.Resolve<IAuxBlockRepository>();
-        auxMapper = ctx.Resolve<IMapper>();
     }
 
     protected override object[] GetBlockTemplateParams()
