@@ -129,4 +129,16 @@ public class AuxBlockRepository : IAuxBlockRepository
 
         await con.ExecuteAsync(query, mapped, tx);
     }
+
+    public Task<int> GetPoolAuxBlockCountAsync(IDbConnection con, string poolId, CancellationToken ct)
+    {
+        const string query = @"SELECT COUNT(*) FROM auxblocks WHERE poolid = @poolId";
+        return con.ExecuteScalarAsync<int>(new CommandDefinition(query, new { poolId }, cancellationToken: ct));
+    }
+
+    public Task<int> GetPoolAuxBlockCountSinceAsync(IDbConnection con, string poolId, DateTime since, CancellationToken ct)
+    {
+        const string query = @"SELECT COUNT(*) FROM auxblocks WHERE poolid = @poolId AND created >= @since";
+        return con.ExecuteScalarAsync<int>(new CommandDefinition(query, new { poolId, since }, cancellationToken: ct));
+    }
 }
