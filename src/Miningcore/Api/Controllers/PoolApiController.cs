@@ -893,8 +893,13 @@ public class PoolApiController : ApiControllerBase
 
             block.RequiredConfirmations = chainCfg.RequiredConfirmations > 0 ? chainCfg.RequiredConfirmations : 100;
 
-            if(block.AuxBlockHash != null && !string.IsNullOrEmpty(chainCfg.ExplorerBlockLink))
-                block.InfoLink = chainCfg.ExplorerBlockLink.Replace("{hash}", block.AuxBlockHash);
+            if(!string.IsNullOrEmpty(chainCfg.ExplorerBlockLink))
+            {
+                var link = chainCfg.ExplorerBlockLink;
+                if(block.AuxBlockHash != null) link = link.Replace("{hash}", block.AuxBlockHash);
+                if(block.BlockHeight.HasValue) link = link.Replace("{height}", block.BlockHeight.Value.ToString());
+                if(!link.Contains('{')) block.InfoLink = link;
+            }
         }
     }
 }
