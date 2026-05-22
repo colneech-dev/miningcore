@@ -91,6 +91,22 @@ public class AuxBlockRepository : IAuxBlockRepository
             .ToArray();
     }
 
+    public async Task<AuxBlock[]> GetRecentlyConfirmedAsync(IDbConnection con, string poolId, string chainId, TimeSpan window, int limit, CancellationToken ct)
+    {
+        const string query = @"SELECT * FROM auxblocks WHERE poolid = @poolId AND chainid = @chainId
+            AND status = 'confirmed' AND blockheight IS NOT NULL AND created >= @since
+            ORDER BY created DESC LIMIT @limit";
+
+        return (await con.QueryAsync<Entities.AuxBlock>(new CommandDefinition(query, new
+        {
+            poolId, chainId,
+            since = DateTime.UtcNow - window,
+            limit
+        }, cancellationToken: ct)))
+            .Select(mapper.Map<AuxBlock>)
+            .ToArray();
+    }
+
     public async Task<AuxBlock[]> GetBlocksWithoutHeightAsync(IDbConnection con, string poolId, string chainId, int limit, CancellationToken ct)
     {
         const string query = @"SELECT * FROM auxblocks WHERE poolid = @poolId AND chainid = @chainId
