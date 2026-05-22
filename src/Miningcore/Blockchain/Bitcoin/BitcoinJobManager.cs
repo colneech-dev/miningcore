@@ -39,6 +39,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
 
     private BitcoinTemplate coin;
     private readonly ConcurrentDictionary<string, byte> submittedAuxHashes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, RpcClient> auxRpcClients = new();
     private IConnectionFactory cf;
     private IAuxBlockRepository auxBlockRepo;
     private IMapper auxMapper;
@@ -387,7 +388,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
             var submittingJob = job;
             foreach(var (auxBlock, headerBytes, coinbase) in share.AuxCandidates)
             {
-                var manager = auxPowManagers.FirstOrDefault(m => m.CurrentAuxBlock?.Hash == auxBlock.Hash);
+                var manager = auxPowManagers.FirstOrDefault(m => string.Equals(m.CurrentAuxBlock?.Hash, auxBlock.Hash, StringComparison.OrdinalIgnoreCase));
                 if(manager == null)
                 {
                     logger.Debug(() => $"No manager found for aux block {auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]} — block likely superseded");
@@ -489,10 +490,19 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
         }
     }
 
+    private RpcClient GetAuxRpcClient(AuxChainConfig config)
+    {
+        if(!auxRpcClients.TryGetValue(config.Id, out var client))
+        {
+            var jsonSerializerSettings = ctx.Resolve<JsonSerializerSettings>();
+            client = new RpcClient(config.Daemons.First(), jsonSerializerSettings, messageBus, config.Id);
+            auxRpcClients[config.Id] = client;
+        }
+        return client;
+    }
+
     private async Task ConfirmAuxBlocksAsync(CancellationToken ct)
     {
-        var jsonSerializerSettings = ctx.Resolve<JsonSerializerSettings>();
-
         foreach(var manager in auxPowManagers)
         {
             var config = manager.Config;
@@ -501,7 +511,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
 
             try
             {
-                var auxRpc = new RpcClient(config.Daemons.First(), jsonSerializerSettings, messageBus, config.Id);
+                var auxRpc = GetAuxRpcClient(config);
 
                 var chainInfoResult = await auxRpc.ExecuteAsync<BlockchainInfo>(logger, BitcoinCommands.GetBlockchainInfo, ct);
                 long currentHeight;
@@ -571,6 +581,22 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                     block.BlockHeight = blockResult.Response.Height;
                     await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
                     logger.Info(() => $"[aux-confirm] [{config.Id}] Healed missing height for {block.AuxBlockHash[..Math.Min(8, block.AuxBlockHash.Length)]}… → {block.BlockHeight}");
+                }
+
+                // Deep reorg check: re-verify recently confirmed blocks in case of chain reorg
+                var recentConfirmed = await cf.Run(con => auxBlockRepo.GetRecentlyConfirmedAsync(con, poolConfig.Id, config.Id, TimeSpan.FromHours(24), 50, ct));
+                foreach(var block in recentConfirmed)
+                {
+                    var blockHeight = (long)block.BlockHeight!.Value;
+                    var hashResult = await auxRpc.ExecuteAsync<string>(logger, "getblockhash", ct, new object[] { blockHeight });
+                    if(hashResult.Response == null) continue;
+                    if(!string.Equals(hashResult.Response, block.AuxBlockHash, StringComparison.OrdinalIgnoreCase))
+                    {
+                        block.Status = BlockStatus.Orphaned;
+                        block.ConfirmationProgress = 0;
+                        await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
+                        logger.Warn(() => $"[aux-confirm] [{config.Id}] Deep reorg: block {block.AuxBlockHash[..Math.Min(8, block.AuxBlockHash.Length)]}… at height {blockHeight} is now orphaned");
+                    }
                 }
             }
             catch(Exception ex)
