@@ -10,6 +10,7 @@ using Miningcore.Extensions;
 using Miningcore.JsonRpc;
 using Miningcore.Messaging;
 using Miningcore.Persistence;
+using Miningcore.Persistence.Model;
 using Miningcore.Persistence.Repositories;
 using Miningcore.Rpc;
 using Miningcore.Stratum;
@@ -18,6 +19,8 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NLog;
 using System.Collections.Concurrent;
+using System.Reactive.Linq;
+using static Miningcore.Util.ActionUtils;
 
 using Miningcore.Blockchain.Bitcoin.AuxPoW;
 
@@ -466,6 +469,92 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
         }
 
         return share;
+    }
+
+    protected override async Task PostStartInitAsync(CancellationToken ct)
+    {
+        await base.PostStartInitAsync(ct);
+
+        if(auxPowManagers.Count > 0)
+        {
+            EnsureAuxPersistence();
+
+            Observable.Interval(TimeSpan.FromMinutes(1))
+                .Select(_ => Observable.FromAsync(() =>
+                    Guard(() => ConfirmAuxBlocksAsync(ct), ex => logger.Error(ex))))
+                .Concat()
+                .Subscribe();
+        }
+    }
+
+    private async Task ConfirmAuxBlocksAsync(CancellationToken ct)
+    {
+        var jsonSerializerSettings = ctx.Resolve<JsonSerializerSettings>();
+
+        foreach(var manager in auxPowManagers)
+        {
+            var config = manager.Config;
+            if(config.RequiredConfirmations <= 0 || config.Daemons == null || config.Daemons.Length == 0)
+                continue;
+
+            try
+            {
+                var auxRpc = new RpcClient(config.Daemons.First(), jsonSerializerSettings, messageBus, config.Id);
+
+                var chainInfoResult = await auxRpc.ExecuteAsync<BlockchainInfo>(logger, BitcoinCommands.GetBlockchainInfo, ct);
+                if(chainInfoResult.Error != null || chainInfoResult.Response == null)
+                {
+                    logger.Warn(() => $"[aux-confirm] [{config.Id}] Could not get chain info: {chainInfoResult.Error?.Message}");
+                    continue;
+                }
+
+                var currentHeight = chainInfoResult.Response.Blocks;
+                var pending = await cf.Run(con => auxBlockRepo.GetPendingAsync(con, poolConfig.Id, config.Id, 200, ct));
+
+                foreach(var block in pending)
+                {
+                    if(block.BlockHeight == null)
+                        continue;
+
+                    var blockHeight = (long)block.BlockHeight.Value;
+                    var confirmations = currentHeight - blockHeight + 1;
+
+                    if(confirmations < 0)
+                        continue;
+
+                    // Orphan check: hash at this height should match our stored hash
+                    var hashResult = await auxRpc.ExecuteAsync<string>(logger, "getblockhash", ct, new object[] { blockHeight });
+                    if(hashResult.Response != null &&
+                       !string.Equals(hashResult.Response, block.AuxBlockHash, StringComparison.OrdinalIgnoreCase))
+                    {
+                        block.Status = BlockStatus.Orphaned;
+                        block.ConfirmationProgress = 0;
+                        await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
+                        logger.Info(() => $"[aux-confirm] [{config.Id}] Block {block.AuxBlockHash[..Math.Min(8, block.AuxBlockHash.Length)]}… height {blockHeight} orphaned");
+                        continue;
+                    }
+
+                    var progress = Math.Min(1.0, (double) confirmations / config.RequiredConfirmations);
+
+                    if(progress >= 1.0)
+                    {
+                        block.Status = BlockStatus.Confirmed;
+                        block.ConfirmationProgress = 1;
+                        logger.Info(() => $"[aux-confirm] [{config.Id}] Block {block.AuxBlockHash[..Math.Min(8, block.AuxBlockHash.Length)]}… confirmed at height {blockHeight}");
+                    }
+                    else
+                    {
+                        block.ConfirmationProgress = progress;
+                    }
+
+                    await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
+                }
+            }
+            catch(Exception ex)
+            {
+                logger.Warn(() => $"[aux-confirm] [{config.Id}] Check failed: {ex.Message}");
+            }
+        }
     }
 
     public double ShareMultiplier => coin.ShareMultiplier;

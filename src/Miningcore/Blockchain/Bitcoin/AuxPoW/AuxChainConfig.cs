@@ -42,4 +42,11 @@ public class AuxChainConfig
 
     /// <summary>ZMQ topic to subscribe to. Defaults to "hashblock".</summary>
     public string ZmqBlockNotifyTopic { get; set; }
+
+    /// <summary>Block explorer URL for aux block hashes. Use {hash} as placeholder.
+    /// Example: "https://explorer.coin.org/block/{hash}"</summary>
+    public string ExplorerBlockLink { get; set; }
+
+    /// <summary>Confirmations required before an aux block is marked confirmed. Defaults to 100.</summary>
+    public int RequiredConfirmations { get; set; } = 100;
 }

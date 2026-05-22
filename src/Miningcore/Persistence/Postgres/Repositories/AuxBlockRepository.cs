@@ -77,4 +77,27 @@ public class AuxBlockRepository : IAuxBlockRepository
             .Select(mapper.Map<AuxBlock>)
             .ToArray();
     }
+
+    public async Task<AuxBlock[]> GetPendingAsync(IDbConnection con, string poolId, string chainId, int limit, CancellationToken ct)
+    {
+        const string query = @"SELECT * FROM auxblocks WHERE poolid = @poolId AND chainid = @chainId
+            AND status = 'pending' ORDER BY created ASC LIMIT @limit";
+
+        return (await con.QueryAsync<Entities.AuxBlock>(new CommandDefinition(query, new
+        {
+            poolId, chainId, limit
+        }, cancellationToken: ct)))
+            .Select(mapper.Map<AuxBlock>)
+            .ToArray();
+    }
+
+    public async Task UpdateAsync(IDbConnection con, IDbTransaction tx, AuxBlock block)
+    {
+        var mapped = mapper.Map<Entities.AuxBlock>(block);
+
+        const string query = @"UPDATE auxblocks SET status = @status, confirmationprogress = @confirmationprogress
+            WHERE id = @id";
+
+        await con.ExecuteAsync(query, mapped, tx);
+    }
 }
