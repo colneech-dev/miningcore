@@ -85,6 +85,8 @@ public partial class PoolInfo
     public decimal BlockReward { get; set; }
     public DateTime? LastPoolBlockTime { get; set; }
     public double PoolEffort { get; set; }
+    public int TotalAuxBlocks { get; set; }
+    public DateTime? LastAuxBlockTime { get; set; }
 }
 
 public class GetPoolsResponse
