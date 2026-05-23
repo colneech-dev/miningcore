@@ -3,6 +3,8 @@
 *.sln.docstates
 .vs/
 .vscode/
+.claude/
+....build/
 
 [Dd]ebug/
 [Rr]elease/
