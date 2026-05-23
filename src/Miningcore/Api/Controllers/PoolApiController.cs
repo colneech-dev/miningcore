@@ -86,6 +86,13 @@ public class PoolApiController : ApiControllerBase
                 var lastBlockTime = await cf.Run(con => blocksRepo.GetLastPoolBlockTimeAsync(con, config.Id, ct));
                 result.LastPoolBlockTime = lastBlockTime;
 
+                var auxExtra = config.Extra?.SafeExtensionDataAs<Blockchain.Bitcoin.Configuration.BitcoinPoolConfigExtra>();
+                if(auxExtra?.AuxChains is { Length: > 0 })
+                {
+                    result.TotalAuxBlocks = await cf.Run(con => auxBlocksRepo.GetPoolAuxBlockCountAsync(con, config.Id, ct));
+                    result.LastAuxBlockTime = await cf.Run(con => auxBlocksRepo.GetLastPoolAuxBlockTimeAsync(con, config.Id, ct));
+                }
+
                 var payoutConfig = config.PaymentProcessing;
                 result.PaymentProcessing.PayoutSchemeConfig = payoutConfig?.PayoutSchemeConfig.ToObject<ApiPoolPayoutSchemeConfig>();
                 // display block finder percentage only if PPLNSBF is activated
@@ -167,6 +174,13 @@ public class PoolApiController : ApiControllerBase
             response.Pool.BlockReward = poolInstance.NetworkStats?.BlockReward ?? 0;
         var lastBlockTime = await cf.Run(con => blocksRepo.GetLastPoolBlockTimeAsync(con, pool.Id, ct));
         response.Pool.LastPoolBlockTime = lastBlockTime;
+
+        var auxExtra = pool.Extra?.SafeExtensionDataAs<Blockchain.Bitcoin.Configuration.BitcoinPoolConfigExtra>();
+        if(auxExtra?.AuxChains is { Length: > 0 })
+        {
+            response.Pool.TotalAuxBlocks = await cf.Run(con => auxBlocksRepo.GetPoolAuxBlockCountAsync(con, pool.Id, ct));
+            response.Pool.LastAuxBlockTime = await cf.Run(con => auxBlocksRepo.GetLastPoolAuxBlockTimeAsync(con, pool.Id, ct));
+        }
 
         var payoutConfig = pool.PaymentProcessing;
         response.Pool.PaymentProcessing.PayoutSchemeConfig = payoutConfig?.PayoutSchemeConfig.ToObject<ApiPoolPayoutSchemeConfig>();
