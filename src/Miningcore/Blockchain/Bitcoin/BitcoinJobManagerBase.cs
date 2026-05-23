@@ -16,6 +16,7 @@ using NBitcoin;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Miningcore.Blockchain.Bitcoin.AuxPoW;
+using Miningcore.Blockchain.Bitcoin.RSK;
 using static Miningcore.Util.ActionUtils;
 
 namespace Miningcore.Blockchain.Bitcoin;
@@ -46,6 +47,7 @@ public abstract class BitcoinJobManagerBase<TJob> : JobManagerBase<TJob>
     protected bool hasLegacyDaemon;
     protected BitcoinPoolConfigExtra extraPoolConfig;
     protected List<AuxPowManager> auxPowManagers = new();
+    protected RskManager rskManager;
     protected BitcoinPoolPaymentProcessingConfigExtra extraPoolPaymentProcessingConfig;
     protected DateTime? lastJobRebroadcast;
     protected bool hasSubmitBlockMethod;
@@ -393,6 +395,13 @@ public abstract class BitcoinJobManagerBase<TJob> : JobManagerBase<TJob>
                 auxPowManagers.Add(manager);
                 logger.Info(() => "Aux merge mining configured for " + auxChain.Name + " (chainId=" + auxChain.ChainId + ")");
             }
+        }
+
+        // Initialize RSK manager if configured
+        if(auxExtra?.RskChain != null)
+        {
+            rskManager = new RskManager(auxExtra.RskChain, jsonSerializerSettings, messageBus);
+            logger.Info(() => $"RSK merge mining configured for {auxExtra.RskChain.Name} (chainId={auxExtra.RskChain.ChainId})");
         }
     }
 
