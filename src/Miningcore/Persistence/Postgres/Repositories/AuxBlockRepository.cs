@@ -141,4 +141,10 @@ public class AuxBlockRepository : IAuxBlockRepository
         const string query = @"SELECT COUNT(*) FROM auxblocks WHERE poolid = @poolId AND created >= @since";
         return con.ExecuteScalarAsync<int>(new CommandDefinition(query, new { poolId, since }, cancellationToken: ct));
     }
+
+    public Task<DateTime?> GetLastPoolAuxBlockTimeAsync(IDbConnection con, string poolId, CancellationToken ct)
+    {
+        const string query = @"SELECT MAX(created) FROM auxblocks WHERE poolid = @poolId";
+        return con.ExecuteScalarAsync<DateTime?>(new CommandDefinition(query, new { poolId }, cancellationToken: ct));
+    }
 }

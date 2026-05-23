@@ -30,6 +30,7 @@ public class SummaryPoolEntry
     public uint TotalBlocks { get; set; }
     public int AuxBlocksToday { get; set; }
     public int TotalAuxBlocks { get; set; }
+    public DateTime? LastAuxBlockTime { get; set; }
     public float Fee { get; set; }
     public decimal MinimumPayment { get; set; }
     public SummaryMergeMineEntry[] MergeMinedCoins { get; set; }

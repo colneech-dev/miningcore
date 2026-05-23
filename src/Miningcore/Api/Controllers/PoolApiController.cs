@@ -929,6 +929,9 @@ public class PoolApiController : ApiControllerBase
             var totalAuxBlocks = mergeMinedCoins != null
                 ? await cf.Run(con => auxBlocksRepo.GetPoolAuxBlockCountAsync(con, config.Id, ct))
                 : 0;
+            var lastAuxBlockTime = mergeMinedCoins != null
+                ? await cf.Run(con => auxBlocksRepo.GetLastPoolAuxBlockTimeAsync(con, config.Id, ct))
+                : null;
 
             return new SummaryPoolEntry
             {
@@ -952,6 +955,7 @@ public class PoolApiController : ApiControllerBase
                 TotalBlocks = totalBlocks,
                 AuxBlocksToday = auxBlocksToday,
                 TotalAuxBlocks = totalAuxBlocks,
+                LastAuxBlockTime = lastAuxBlockTime,
                 Fee = config.RewardRecipients != null ? (float) config.RewardRecipients.Sum(x => x.Percentage) : 0,
                 MinimumPayment = config.PaymentProcessing?.MinimumPayment ?? 0,
                 MergeMinedCoins = mergeMinedCoins
