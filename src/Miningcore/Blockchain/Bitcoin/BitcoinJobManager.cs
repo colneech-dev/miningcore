@@ -198,6 +198,18 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                 }
             }
 
+            // Refresh RSK work and detect changes
+            AuxBlockData currentRskAuxBlock = null;
+            if(rskManager != null)
+            {
+                await rskManager.RefreshAsync(ct);
+                currentRskAuxBlock = rskManager.CurrentAuxBlock;
+
+                if(!isNew && !forceUpdate && job?.RskAuxBlock?.Hash != null &&
+                   !string.Equals(job.RskAuxBlock.Hash, currentRskAuxBlock?.Hash, StringComparison.OrdinalIgnoreCase))
+                    isNew = true;
+            }
+
             if(isNew || forceUpdate)
             {
                 job = CreateJob();
@@ -206,7 +218,8 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                     poolConfig, extraPoolConfig, clusterConfig, clock, poolAddressDestination, network, isPoS,
                     ShareMultiplier, coin.CoinbaseHasherValue, coin.HeaderHasherValue,
                     !isPoS ? coin.BlockHasherValue : coin.PoSBlockHasherValue ?? coin.BlockHasherValue,
-                    currentAuxBlocks);
+                    currentAuxBlocks,
+                    currentRskAuxBlock);
 
                 if(isNew || forceUpdate)
                     submittedAuxHashes.Clear();
@@ -381,25 +394,80 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
         }
 
         // Submit to any aux chains (merged mining) if this share met their targets
-        if(share.AuxCandidates?.Count > 0 && auxPowManagers.Count > 0)
+        if(share.AuxCandidates?.Count > 0 && (auxPowManagers.Count > 0 || rskManager != null))
         {
             var submittingJob = job;
             foreach(var (auxBlock, headerBytes, coinbase) in share.AuxCandidates)
             {
-                var manager = auxPowManagers.FirstOrDefault(m => string.Equals(m.CurrentAuxBlock?.Hash, auxBlock.Hash, StringComparison.OrdinalIgnoreCase));
-                if(manager == null)
-                {
-                    logger.Debug(() => $"No manager found for aux block {auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]} — block likely superseded");
-                    continue;
-                }
-
-                // Duplicate guard: two concurrent shares could both meet the aux target.
-                // Key is scoped to (chainId, hash) so different chains with the same block hash
-                // don't suppress each other's submission.
                 var dedupKey = $"{auxBlock.ChainId}:{auxBlock.Hash}";
                 if(!submittedAuxHashes.TryAdd(dedupKey, 1))
                 {
                     logger.Debug(() => $"Skipping duplicate aux submission for {auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]}");
+                    continue;
+                }
+
+                // RSK uses mnr_submitBitcoinBlock — route by chainId
+                if(rskManager != null && auxBlock.ChainId == rskManager.Config.ChainId)
+                {
+                    try
+                    {
+                        logger.Info(() => $"Submitting merged block to {rskManager.Config.Name}");
+
+                        var coinbaseTxHex = coinbase.ToHexString();
+                        var merkleBranch = submittingJob?.MerkleBranchSteps ?? new List<byte[]>();
+                        var headerHex = headerBytes.ToHexString();
+
+                        logger.Info(() => $"RSK submit: hash={auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]}... coinbaseBranchLen={merkleBranch.Count}");
+                        var rskAccepted = await rskManager.SubmitBitcoinBlockAsync(
+                            auxBlock.Hash, headerHex, coinbaseTxHex, merkleBranch, ct);
+
+                        if(rskAccepted)
+                        {
+                            try
+                            {
+                                EnsureAuxPersistence();
+
+                                var record = new Persistence.Model.AuxBlock
+                                {
+                                    PoolId = poolConfig.Id,
+                                    ChainId = rskManager.Config.Id,
+                                    ChainName = rskManager.Config.Name,
+                                    BlockHeight = auxBlock.Height > 0 ? (ulong?)auxBlock.Height : null,
+                                    AuxBlockHash = auxBlock.Hash,
+                                    ParentBlockHash = share.BlockHash,
+                                    Status = Persistence.Model.BlockStatus.Pending,
+                                    ConfirmationProgress = 0,
+                                    Reward = auxBlock.CoinbaseValue > 0 ? (decimal)auxBlock.CoinbaseValue / 100_000_000m : null,
+                                    Miner = share.Miner,
+                                    Worker = share.Worker,
+                                    Source = clusterConfig.ClusterName,
+                                    SubmittedVia = "live",
+                                    Created = clock.Now,
+                                };
+
+                                _ = cf.RunTx(async (con, tx) => await auxBlockRepo.InsertAsync(con, tx, record))
+                                    .ContinueWith(t => logger.Error(t.Exception, () => $"Failed to persist RSK block {auxBlock.Hash}"),
+                                        TaskContinuationOptions.OnlyOnFaulted);
+                            }
+                            catch(Exception ex)
+                            {
+                                logger.Error(ex, () => $"Failed to persist RSK block {auxBlock.Hash}");
+                            }
+                        }
+                    }
+                    catch(Exception ex)
+                    {
+                        logger.Error(ex, () => $"Error submitting RSK merged block: {ex.Message}");
+                    }
+
+                    continue;
+                }
+
+                // Standard AuxPoW submission
+                var manager = auxPowManagers.FirstOrDefault(m => string.Equals(m.CurrentAuxBlock?.Hash, auxBlock.Hash, StringComparison.OrdinalIgnoreCase));
+                if(manager == null)
+                {
+                    logger.Debug(() => $"No manager found for aux block {auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]} — block likely superseded");
                     continue;
                 }
 
@@ -468,6 +536,9 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
             foreach(var manager in auxPowManagers)
                 _ = manager.RefreshAsync(CancellationToken.None);
         }
+
+        if(rskManager != null)
+            _ = rskManager.RefreshAsync(CancellationToken.None);
 
         return share;
     }

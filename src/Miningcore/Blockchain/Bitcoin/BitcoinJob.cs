@@ -38,7 +38,8 @@ public class BitcoinJob
     protected IDestination poolAddressDestination;
     protected BitcoinTemplate coin;
     protected BitcoinPoolConfigExtra extraPoolConfig;
-    protected AuxBlockData[] auxBlocks;  // current aux chain work for merge mining
+    protected AuxBlockData[] auxBlocks;    // standard aux chain work for merge mining (multi-chain tree)
+    protected AuxBlockData rskAuxBlock;  // RSK standalone commitment (separate from aux tree)
     private BitcoinTemplate.BitcoinNetworkParams networkParams;
     protected readonly ConcurrentDictionary<string, bool> submissions = new(StringComparer.OrdinalIgnoreCase);
     protected uint256 blockTargetValue;
@@ -357,6 +358,19 @@ public class BitcoinJob
             ops.Add(Op.GetPushOp(commitment));
         }
 
+        // RSK standalone commitment: 0xfabe6d6d + RSK_block_hash + treeSize=1 + nonce=0
+        // Must come AFTER the multi-chain tree commitment so Namecoin-style daemons find
+        // the multi-chain tree at the first 0xfabe6d6d occurrence.
+        // RSKj searches for the occurrence whose 32-byte payload matches blockHashForMergedMining.
+        if(rskAuxBlock?.Hash != null)
+        {
+            var rskCommitment = AuxPowSerializer.BuildCoinbaseCommitment(
+                rskAuxBlock.Hash.HexToByteArray(),  // big-endian as received from mnr_getWork
+                treeSize: 1,
+                nonce: 0);
+            ops.Add(Op.GetPushOp(rskCommitment));
+        }
+
         return new Script(ops);
     }
 
@@ -531,6 +545,14 @@ public class BitcoinJob
                     logger.Info(() => "[" + worker.ConnectionId + "] Merged mining candidate: meets aux target for " + (aux.Hash.Length > 16 ? aux.Hash[..16] : aux.Hash) + "...");
                 }
             }
+        }
+
+        // Check RSK target (standalone coinbase commitment, separate from aux tree)
+        if(rskAuxBlock?.TargetValue != null && headerValue <= rskAuxBlock.TargetValue)
+        {
+            auxCandidates ??= new();
+            auxCandidates.Add((rskAuxBlock, headerBytes.ToArray(), coinbase));
+            logger.Info(() => $"[{worker.ConnectionId}] RSK merged mining candidate: hash={rskAuxBlock.Hash[..Math.Min(16, rskAuxBlock.Hash.Length)]}...");
         }
 
         if(isBlockCandidate)
@@ -1021,6 +1043,7 @@ public class BitcoinJob
 
     public List<byte[]> MerkleBranchSteps => mt?.Steps?.ToList() ?? new List<byte[]>();
     public AuxBlockData[] AuxBlocks => auxBlocks;
+    public AuxBlockData RskAuxBlock => rskAuxBlock;
     public byte[][] AuxMerkleNodes => auxMerkleNodes;
     public int AuxMerkleTreeSize => auxMerkleTreeSize;
     public uint AuxMerkleTreeNonce => auxMerkleTreeNonce;
@@ -1031,7 +1054,8 @@ public class BitcoinJob
         IDestination poolAddressDestination, Network network,
         bool isPoS, double shareMultiplier, IHashAlgorithm coinbaseHasher,
         IHashAlgorithm headerHasher, IHashAlgorithm blockHasher,
-        AuxBlockData[] auxBlocks = null)
+        AuxBlockData[] auxBlocks = null,
+        AuxBlockData rskAuxBlock = null)
     {
         Contract.RequiresNonNull(blockTemplate);
         Contract.RequiresNonNull(pc);
@@ -1046,6 +1070,7 @@ public class BitcoinJob
         coin = pc.Template.As<BitcoinTemplate>();
         this.extraPoolConfig = extraPoolConfig;
         this.auxBlocks = auxBlocks;
+        this.rskAuxBlock = rskAuxBlock;
         networkParams = coin.GetNetwork(network.ChainName);
         txVersion = coin.CoinbaseTxVersion;
         this.network = network;
