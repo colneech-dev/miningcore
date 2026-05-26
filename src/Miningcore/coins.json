@@ -320,6 +320,34 @@
         "explorerTxLink": "http://explorer.kriptokyng.com:3001/tx/{0}",
         "explorerAccountLink": "http://explorer.kriptokyng.com:3001/address/{0}"
     },
+    "argentum": {
+        "name": "Argentum",
+        "canonicalName": "Argentum",
+        "symbol": "ARG",
+        "family": "bitcoin",
+        "website": "",
+        "market": "",
+        "twitter": "",
+        "telegram": "",
+        "discord": "",
+        "coinbaseHasher": {
+            "hash": "sha256d"
+        },
+        "headerHasher": {
+            "hash": "sha256d"
+        },
+        "blockHasher": {
+            "hash": "reverse",
+            "args": [
+                {
+                    "hash": "sha256d"
+                }
+            ]
+        },
+        "explorerBlockLink": "https://chainz.cryptoid.info/arg/block.dws?$height$.htm",
+        "explorerTxLink": "https://chainz.cryptoid.info/arg/tx.dws?{0}.htm",
+        "explorerAccountLink": "https://chainz.cryptoid.info/arg/address.dws?{0}.htm"
+    },
     "bitcoin": {
         "name": "Bitcoin",
         "canonicalName": "Bitcoin",
@@ -794,6 +822,34 @@
         "explorerBlockLink": "https://explorer.danecoin.org/block/$hash$",
         "explorerTxLink": "https://explorer.danecoin.org/tx/{0}",
         "explorerAccountLink": "https://explorer.danecoin.org/address/{0}"
+    },
+    "doichain": {
+        "name": "DoiChain",
+        "canonicalName": "Doichain",
+        "symbol": "DOI",
+        "family": "bitcoin",
+        "website": "",
+        "market": "",
+        "twitter": "",
+        "telegram": "",
+        "discord": "",
+        "coinbaseHasher": {
+            "hash": "sha256d"
+        },
+        "headerHasher": {
+            "hash": "sha256d"
+        },
+        "blockHasher": {
+            "hash": "reverse",
+            "args": [
+                {
+                    "hash": "sha256d"
+                }
+            ]
+        },
+        "explorerBlockLink": "https://explorer.doichain.org/block/$hash$",
+        "explorerTxLink": "https://explorer.doichain.org/tx/{0}",
+        "explorerAccountLink": "https://explorer.doichain.org/address/{0}"
     },
     "dash": {
         "name": "Dash",
