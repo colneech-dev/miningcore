@@ -673,6 +673,104 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                 logger.Warn(() => $"[aux-confirm] [{config.Id}] Check failed: {ex.Message}");
             }
         }
+
+        if(rskManager != null)
+            await ConfirmRskBlocksAsync(ct);
+    }
+
+    private async Task ConfirmRskBlocksAsync(CancellationToken ct)
+    {
+        var rskConfig = rskManager.Config;
+        if(rskConfig.RequiredConfirmations <= 0)
+            return;
+
+        try
+        {
+            var blockNumResult = await rskManager.Rpc.ExecuteAsync<string>(logger, "eth_blockNumber", ct);
+            if(blockNumResult.Error != null || blockNumResult.Response == null)
+            {
+                logger.Warn(() => $"[rsk-confirm] Could not get RSK block height: {blockNumResult.Error?.Message}");
+                return;
+            }
+            var currentHeight = Convert.ToInt64(blockNumResult.Response.TrimStart('0', 'x').TrimStart('0', 'X'), 16);
+
+            // Heal blocks missing height
+            var noHeight = await cf.Run(con => auxBlockRepo.GetBlocksWithoutHeightAsync(con, poolConfig.Id, rskConfig.Id, 50, ct));
+            foreach(var block in noHeight)
+            {
+                if(string.IsNullOrEmpty(block.AuxBlockHash)) continue;
+                var hexHash = block.AuxBlockHash.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? block.AuxBlockHash : "0x" + block.AuxBlockHash;
+                var br = await rskManager.Rpc.ExecuteAsync<JToken>(logger, "eth_getBlockByHash", ct, new object[] { hexHash, false });
+                if(br.Error != null || br.Response == null || br.Response.Type == JTokenType.Null) continue;
+                var numHex = br.Response["number"]?.Value<string>();
+                if(string.IsNullOrEmpty(numHex)) continue;
+                block.BlockHeight = (ulong)Convert.ToInt64(numHex.TrimStart('0', 'x').TrimStart('0', 'X'), 16);
+                await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
+                logger.Info(() => $"[rsk-confirm] Healed height for {block.AuxBlockHash[..Math.Min(8, block.AuxBlockHash.Length)]}… → {block.BlockHeight}");
+            }
+
+            // Confirm/orphan pending blocks
+            var pending = await cf.Run(con => auxBlockRepo.GetPendingAsync(con, poolConfig.Id, rskConfig.Id, 200, ct));
+            foreach(var block in pending)
+            {
+                if(block.BlockHeight == null) continue;
+                var blockHeight = (long)block.BlockHeight.Value;
+                var confirmations = currentHeight - blockHeight + 1;
+                if(confirmations < 0) continue;
+
+                var heightHex = "0x" + blockHeight.ToString("x");
+                var chainBlock = await rskManager.Rpc.ExecuteAsync<JToken>(logger, "eth_getBlockByNumber", ct, new object[] { heightHex, false });
+                if(chainBlock.Response != null && chainBlock.Response.Type != JTokenType.Null)
+                {
+                    var chainHash = chainBlock.Response["hash"]?.Value<string>() ?? "";
+                    var storedHash = block.AuxBlockHash.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? block.AuxBlockHash : "0x" + block.AuxBlockHash;
+                    if(!string.IsNullOrEmpty(chainHash) && !string.Equals(chainHash, storedHash, StringComparison.OrdinalIgnoreCase))
+                    {
+                        block.Status = BlockStatus.Orphaned;
+                        block.ConfirmationProgress = 0;
+                        await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
+                        logger.Info(() => $"[rsk-confirm] Block {block.AuxBlockHash[..Math.Min(8, block.AuxBlockHash.Length)]}… height {blockHeight} orphaned");
+                        continue;
+                    }
+                }
+
+                var progress = Math.Min(1.0, (double) confirmations / rskConfig.RequiredConfirmations);
+                if(progress >= 1.0)
+                {
+                    block.Status = BlockStatus.Confirmed;
+                    block.ConfirmationProgress = 1;
+                    logger.Info(() => $"[rsk-confirm] Block {block.AuxBlockHash[..Math.Min(8, block.AuxBlockHash.Length)]}… confirmed at height {blockHeight}");
+                }
+                else
+                    block.ConfirmationProgress = progress;
+
+                await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
+            }
+
+            // Deep reorg check on recently confirmed blocks
+            var recentConfirmed = await cf.Run(con => auxBlockRepo.GetRecentlyConfirmedAsync(con, poolConfig.Id, rskConfig.Id, TimeSpan.FromHours(24), 50, ct));
+            foreach(var block in recentConfirmed)
+            {
+                if(block.BlockHeight == null) continue;
+                var blockHeight = (long)block.BlockHeight.Value;
+                var heightHex = "0x" + blockHeight.ToString("x");
+                var chainBlock = await rskManager.Rpc.ExecuteAsync<JToken>(logger, "eth_getBlockByNumber", ct, new object[] { heightHex, false });
+                if(chainBlock.Response == null || chainBlock.Response.Type == JTokenType.Null) continue;
+                var chainHash = chainBlock.Response["hash"]?.Value<string>() ?? "";
+                var storedHash = block.AuxBlockHash.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? block.AuxBlockHash : "0x" + block.AuxBlockHash;
+                if(!string.IsNullOrEmpty(chainHash) && !string.Equals(chainHash, storedHash, StringComparison.OrdinalIgnoreCase))
+                {
+                    block.Status = BlockStatus.Orphaned;
+                    block.ConfirmationProgress = 0;
+                    await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
+                    logger.Warn(() => $"[rsk-confirm] Deep reorg: block {block.AuxBlockHash[..Math.Min(8, block.AuxBlockHash.Length)]}… at height {blockHeight} orphaned");
+                }
+            }
+        }
+        catch(Exception ex)
+        {
+            logger.Warn(() => $"[rsk-confirm] Check failed: {ex.Message}");
+        }
     }
 
     public double ShareMultiplier => coin.ShareMultiplier;

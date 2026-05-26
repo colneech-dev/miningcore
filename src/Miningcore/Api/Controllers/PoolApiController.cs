@@ -930,12 +930,13 @@ public class PoolApiController : ApiControllerBase
 
             SummaryMergeMineEntry[] mergeMinedCoins = null;
             var bitcoinExtra = config.Extra?.SafeExtensionDataAs<Blockchain.Bitcoin.Configuration.BitcoinPoolConfigExtra>();
+            var entries = new List<SummaryMergeMineEntry>();
             if(bitcoinExtra?.AuxChains is { Length: > 0 })
-            {
-                mergeMinedCoins = bitcoinExtra.AuxChains
-                    .Select(a => new SummaryMergeMineEntry { Id = a.Id, Name = a.Name ?? a.Id })
-                    .ToArray();
-            }
+                entries.AddRange(bitcoinExtra.AuxChains.Select(a => new SummaryMergeMineEntry { Id = a.Id, Name = a.Name ?? a.Id }));
+            if(bitcoinExtra?.RskChain != null)
+                entries.Add(new SummaryMergeMineEntry { Id = bitcoinExtra.RskChain.Id, Name = bitcoinExtra.RskChain.Name ?? bitcoinExtra.RskChain.Id });
+            if(entries.Count > 0)
+                mergeMinedCoins = entries.ToArray();
 
             var auxBlocksToday = mergeMinedCoins != null
                 ? await cf.Run(con => auxBlocksRepo.GetPoolAuxBlockCountSinceAsync(con, config.Id, todayUtc, ct))

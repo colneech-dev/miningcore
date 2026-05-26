@@ -50,6 +50,7 @@ public class RskManager : IDisposable
 
     public RskChainConfig Config => config;
     public AuxBlockData CurrentAuxBlock => currentAuxBlock;
+    public RpcClient Rpc => rpc;
 
     /// <summary>
     /// Polls mnr_getWork if the cache has expired or been invalidated.
