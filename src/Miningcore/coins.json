@@ -4716,9 +4716,39 @@
             ]
         },
         "shareMultiplier": 65536,
-        "explorerBlockLink": "https://chainz.cryptoid.info/via/block.dws?$height$.htm",
-        "explorerTxLink": "https://chainz.cryptoid.info/via/tx.dws?{0}.htm",
-        "explorerAccountLink": "https://chainz.cryptoid.info/via/address.dws?{0}.htm"
+        "explorerBlockLink": "https://explorer.viacoin.org/block/$hash$",
+        "explorerTxLink": "https://explorer.viacoin.org/tx/{0}",
+        "explorerAccountLink": "https://explorer.viacoin.org/address/{0}"
+    },
+    "bells": {
+        "name": "Bellscoin",
+        "canonicalName": "Bellscoin",
+        "symbol": "BELLS",
+        "family": "bitcoin",
+        "website": "https://bellscoin.com/",
+        "coinbaseHasher": { "hash": "sha256d" },
+        "headerHasher": { "hash": "scrypt", "args": [1024, 1] },
+        "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
+        "shareMultiplier": 65536,
+        "coinbaseMinConfimations": 251,
+        "explorerBlockLink": "https://bellsscan.io/block/$hash$",
+        "explorerTxLink": "https://bellsscan.io/tx/{0}",
+        "explorerAccountLink": "https://bellsscan.io/address/{0}"
+    },
+    "pepecoin": {
+        "name": "Pepecoin",
+        "canonicalName": "Pepecoin",
+        "symbol": "PEP",
+        "family": "bitcoin",
+        "website": "https://pepecoin.org/",
+        "coinbaseHasher": { "hash": "sha256d" },
+        "headerHasher": { "hash": "scrypt", "args": [1024, 1] },
+        "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
+        "shareMultiplier": 65536,
+        "coinbaseMinConfimations": 251,
+        "explorerBlockLink": "https://pepeplorer.com/block/$hash$",
+        "explorerTxLink": "https://pepeplorer.com/tx/{0}",
+        "explorerAccountLink": "https://pepeplorer.com/address/{0}"
     },
     "vkax": {
         "name": "Vkax",
