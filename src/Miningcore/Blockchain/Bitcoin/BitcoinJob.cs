@@ -358,18 +358,8 @@ public class BitcoinJob
             ops.Add(Op.GetPushOp(commitment));
         }
 
-        // RSK standalone commitment: 0xfabe6d6d + RSK_block_hash + treeSize=1 + nonce=0
-        // Must come AFTER the multi-chain tree commitment so Namecoin-style daemons find
-        // the multi-chain tree at the first 0xfabe6d6d occurrence.
-        // RSKj searches for the occurrence whose 32-byte payload matches blockHashForMergedMining.
-        if(rskAuxBlock?.Hash != null)
-        {
-            var rskCommitment = AuxPowSerializer.BuildCoinbaseCommitment(
-                rskAuxBlock.Hash.HexToByteArray(),  // big-endian as received from mnr_getWork
-                treeSize: 1,
-                nonce: 0);
-            ops.Add(Op.GetPushOp(rskCommitment));
-        }
+        // RSK commitment is placed in a coinbase OP_RETURN output (see CreateOutputTransaction),
+        // not in the scriptSig, so it does not consume any of the coinbase scriptSig byte budget.
 
         return new Script(ops);
     }
@@ -423,6 +413,18 @@ public class BitcoinJob
 
         // Remaining amount goes to pool
         tx.Outputs.Add(rewardToPool, poolAddressDestination);
+
+        // RSK merge mining: append OP_RETURN output with RSKBLOCK: commitment.
+        // RSKj searches the full serialised coinbase transaction for this pattern,
+        // so placing it in an output keeps the coinbase scriptSig length unchanged
+        // and works on coins with strict 100-byte scriptSig limits (e.g. GateviaViacoin).
+        if(rskAuxBlock?.Hash != null)
+        {
+            var rskData = new byte[9 + 32]; // "RSKBLOCK:" (9) + hash (32)
+            Encoding.ASCII.GetBytes("RSKBLOCK:").CopyTo(rskData, 0);
+            rskAuxBlock.Hash.HexToByteArray().CopyTo(rskData, 9);
+            tx.Outputs.Add(Money.Zero, new Script(OpcodeType.OP_RETURN, Op.GetPushOp(rskData)));
+        }
 
         return tx;
     }
