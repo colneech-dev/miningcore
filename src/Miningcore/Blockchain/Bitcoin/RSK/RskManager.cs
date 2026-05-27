@@ -17,11 +17,11 @@ namespace Miningcore.Blockchain.Bitcoin.RSK;
 ///   - Work fetched via mnr_getWork (returns blockHashForMergedMining + target)
 ///   - Submission via mnr_submitBitcoinBlock (header + coinbase + Bitcoin tx Merkle branch)
 ///
-/// RSK does NOT use the multi-chain aux Merkle tree.  Instead its block hash is embedded
-/// as a standalone 0xfabe6d6d commitment (treeSize=1, nonce=0) in the coinbase, placed
-/// AFTER the standard AuxPoW multi-chain tree commitment so Namecoin-style daemons still
-/// find the correct tree at the first occurrence.  RSKj searches for the occurrence whose
-/// 32-byte payload matches blockHashForMergedMining, making it safe to have two commitments.
+/// RSK does NOT use the multi-chain aux Merkle tree.  Instead its block hash is committed
+/// as an OP_RETURN coinbase output: OP_RETURN + "RSKBLOCK:" (9 bytes) + hash (32 bytes).
+/// RSKj searches the full serialised coinbase transaction for this pattern.
+/// Using an output (rather than the scriptSig) means no coinbase scriptSig bytes are
+/// consumed by RSK, so it works on coins with strict 100-byte scriptSig limits.
 /// </summary>
 public class RskManager : IDisposable
 {

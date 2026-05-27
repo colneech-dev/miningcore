@@ -1,3 +1,4 @@
+using System;
 using Autofac;
 using Microsoft.IO;
 using Miningcore.Blockchain.Bitcoin;
@@ -87,6 +88,48 @@ public class BitcoinJobTests : TestBase
 
         // validate & process
         Assert.ThrowsAny<StratumException>(()=> job.ProcessShare(worker, extraNonce2, nTime, nonce));
+    }
+
+    [Fact]
+    public void Rsk_Commitment_In_OpReturn_Output_Not_ScriptSig()
+    {
+        var job = new BitcoinJob();
+        var coin = (BitcoinTemplate) ModuleInitializer.CoinTemplates["dash"];
+        var pc = new PoolConfig { Template = coin };
+        var blockTemplate = JsonConvert.DeserializeObject<Miningcore.Blockchain.Bitcoin.DaemonResponses.BlockTemplate>("{\"version\":536870912,\"previousBlockhash\":\"0000011a86a1ad3609e5359b6b6411a1654108ee7c1afc003dec23b5a0400e4b\",\"coinbaseValue\":1801475949,\"target\":\"000001d771000000000000000000000000000000000000000000000000000000\",\"nonceRange\":\"00000000ffffffff\",\"curTime\":1665423220,\"bits\":\"1e01d771\",\"height\":813750,\"transactions\":[],\"coinbaseAux\":{\"flags\":null},\"default_witness_commitment\":null,\"capabilities\":[\"proposal\"],\"rules\":[\"csv\",\"dip0001\",\"bip147\",\"dip0003\",\"dip0008\",\"realloc\",\"dip0020\",\"dip0024\"],\"vbavailable\":{},\"vbrequired\":0,\"longpollid\":\"0000011a86a1ad3609e5359b6b6411a1654108ee7c1afc003dec23b5a0400e4b814670\",\"mintime\":1665422408,\"mutable\":[\"time\",\"transactions\",\"prevblock\"],\"sigoplimit\":40000,\"sizelimit\":2000000,\"previousbits\":\"1e01bee4\",\"masternode\":[{\"payee\":\"yVXDAM73Tg6A44Bm3qduXsMCYxzuqBCT48\",\"script\":\"76a91464f2b2b84f62d68a2cd7f7f5fb2b5aa75ef716d788ac\",\"amount\":1080885569}],\"masternode_payments_started\":true,\"masternode_payments_enforced\":true,\"superblock\":[],\"superblocks_started\":true,\"superblocks_enabled\":true,\"coinbase_payload\":\"0200b66a0c00fbab6816312c05803d026cce30fec0332c059f66e421ab0bf65b96ea9efb8a22e12cfc31666208b47a006e5b74f95a4c0797b6bc620ea1cc07cb53616e547302\"}", jsonSerializerSettings);
+        var clock = MockMasterClock.FromTicks(638010200200475015);
+        var poolAddressDestination = BitcoinUtils.AddressToDestination("yNkA6gVSPqKzW6WmJtTazRLKbSkQA5ND2h", Network.TestNet);
+        var network = Network.GetNetwork("testnet");
+
+        // Fake RSK block hash (64 hex chars = 32 bytes)
+        var rskHash = "aabbccdd11223344aabbccdd11223344aabbccdd11223344aabbccdd11223344";
+        var rskBlock = new Miningcore.Blockchain.Bitcoin.AuxPoW.AuxBlockData { Hash = rskHash, ChainId = 151 };
+
+        job.Init(blockTemplate, "1", pc, null, new ClusterConfig(), clock, poolAddressDestination, network, false,
+            coin.ShareMultiplier, coin.CoinbaseHasherValue, coin.HeaderHasherValue, coin.BlockHasherValue,
+            rskAuxBlock: rskBlock);
+
+        var jobParams = (object[]) job.GetJobParams(true);
+        var coinbaseInitialHex = (string) jobParams[2];
+        var coinbaseFinalHex   = (string) jobParams[3];
+        var fullCoinbaseHex    = coinbaseInitialHex + "6000000100000000" + coinbaseFinalHex; // nonce1 + nonce2
+
+        // "RSKBLOCK:" = 52 53 4b 42 4c 4f 43 4b 3a (9 bytes)
+        var rskBlockTagHex = "52534b424c4f434b3a";
+        var rskHashInCoinbase = rskHash;
+
+        // RSK tag + hash must appear in the FINAL part (outputs) of the coinbase, not the initial (scriptSig)
+        Assert.DoesNotContain(rskBlockTagHex, coinbaseInitialHex, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(rskBlockTagHex, coinbaseFinalHex, StringComparison.OrdinalIgnoreCase);
+
+        // The actual RSK hash bytes must be present right after the tag
+        var tagPlusHashHex = rskBlockTagHex + rskHashInCoinbase;
+        Assert.Contains(tagPlusHashHex, coinbaseFinalHex, StringComparison.OrdinalIgnoreCase);
+
+        // The old fabe6d6d RSK standalone pattern must NOT appear in the scriptSig
+        var fabeMagic = "fabe6d6d";
+        // coinbaseInitial contains scriptSig; fabe6d6d for AuxPoW tree would appear only if auxBlocks != null (it's null here)
+        Assert.DoesNotContain(fabeMagic, coinbaseInitialHex, StringComparison.OrdinalIgnoreCase);
     }
 
     private (BitcoinJob, StratumConnection) CreateJob()
