@@ -98,6 +98,12 @@ public class Share
     public double NetworkDifficulty { get; set; }
 
     /// <summary>
+    /// Actual difficulty of this specific hash (diff1 / hash). Only set for block candidates.
+    /// </summary>
+    [ProtoIgnore]
+    public double HashDifficulty { get; set; }
+
+    /// <summary>
     /// When the share was found
     /// </summary>
     [ProtoMember(15)]

@@ -442,6 +442,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                                     Worker = share.Worker,
                                     Source = clusterConfig.ClusterName,
                                     SubmittedVia = "live",
+                                    Difficulty = share.HashDifficulty > 0 ? (double?)share.HashDifficulty : null,
                                     Created = clock.Now,
                                 };
 
@@ -508,6 +509,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                                 Worker = share.Worker,
                                 Source = clusterConfig.ClusterName,
                                 SubmittedVia = "live",
+                                Difficulty = share.HashDifficulty > 0 ? (double?)share.HashDifficulty : null,
                                 Created = clock.Now,
                             };
 

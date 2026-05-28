@@ -20,9 +20,9 @@ public class BlockRepository : IBlockRepository
         var mapped = mapper.Map<Entities.Block>(block);
 
         const string query =
-            @"INSERT INTO blocks(poolid, blockheight, networkdifficulty, status, type, transactionconfirmationdata,
+            @"INSERT INTO blocks(poolid, blockheight, networkdifficulty, difficulty, status, type, transactionconfirmationdata,
                 miner, worker, reward, effort, minereffort, confirmationprogress, source, hash, created)
-            VALUES(@poolid, @blockheight, @networkdifficulty, @status, @type, @transactionconfirmationdata,
+            VALUES(@poolid, @blockheight, @networkdifficulty, @difficulty, @status, @type, @transactionconfirmationdata,
                 @miner, @worker, @reward, @effort, @minereffort, @confirmationprogress, @source, @hash, @created)";
 
         await con.ExecuteAsync(query, mapped, tx);
