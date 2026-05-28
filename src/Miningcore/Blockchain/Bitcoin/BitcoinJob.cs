@@ -534,6 +534,7 @@ public class BitcoinJob
             BlockHeight = BlockTemplate.Height,
             NetworkDifficulty = Difficulty,
             Difficulty = stratumDifficulty / shareMultiplier,
+            HashDifficulty = shareDiff,
         };
 
         // Check aux chain targets for merged mining

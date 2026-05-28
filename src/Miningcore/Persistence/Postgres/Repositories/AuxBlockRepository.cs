@@ -21,9 +21,9 @@ public class AuxBlockRepository : IAuxBlockRepository
 
         const string query = @"
             INSERT INTO auxblocks(poolid, chainid, chainname, blockheight, auxblockhash, parentblockhash,
-                status, confirmationprogress, reward, miner, worker, source, submittedvia, created)
+                status, confirmationprogress, reward, miner, worker, source, submittedvia, difficulty, created)
             VALUES(@poolid, @chainid, @chainname, @blockheight, @auxblockhash, @parentblockhash,
-                @status, @confirmationprogress, @reward, @miner, @worker, @source, @submittedvia, @created)
+                @status, @confirmationprogress, @reward, @miner, @worker, @source, @submittedvia, @difficulty, @created)
             ON CONFLICT (poolid, chainid, auxblockhash) DO NOTHING";
 
         var rows = await con.ExecuteAsync(query, mapped, tx);

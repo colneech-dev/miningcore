@@ -6,6 +6,7 @@ public class Block
     public string PoolId { get; set; }
     public ulong BlockHeight { get; set; }
     public double NetworkDifficulty { get; set; }
+    public double? Difficulty { get; set; }
     public BlockStatus Status { get; set; }
     public string Type { get; set; }
     public double ConfirmationProgress { get; set; }
