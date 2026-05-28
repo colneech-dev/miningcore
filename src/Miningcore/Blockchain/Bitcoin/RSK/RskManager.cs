@@ -94,6 +94,8 @@ public class RskManager : IDisposable
 
             var block = new AuxBlockData
             {
+                // Hash is kept in big-endian (as returned by RSKj). The OP_RETURN commitment writes
+                // it directly; RSKj searches for the same byte sequence. Do NOT reverse here.
                 Hash = hashHex,
                 ChainId = config.ChainId,
                 Target = targetHex,
@@ -104,6 +106,10 @@ public class RskManager : IDisposable
             {
                 // RSKj returns target in big-endian; uint256 stores LE internally, so reverse.
                 block.TargetValue = new uint256(block.Target.HexToByteArray().Reverse().ToArray());
+            }
+            else
+            {
+                logger.Warn(() => $"[{config.Id}] mnr_getWork returned unexpected target (cannot set TargetValue): '{targetHex}'");
             }
 
             currentAuxBlock = block;

@@ -422,6 +422,8 @@ public class BitcoinJob
         {
             var rskData = new byte[9 + 32]; // "RSKBLOCK:" (9) + hash (32)
             Encoding.ASCII.GetBytes("RSKBLOCK:").CopyTo(rskData, 0);
+            // Hash is big-endian as returned by mnr_getWork and stored in AuxBlockData.Hash.
+            // RSKj searches the raw coinbase bytes for "RSKBLOCK:" followed by that same big-endian hash — no reversal.
             rskAuxBlock.Hash.HexToByteArray().CopyTo(rskData, 9);
             tx.Outputs.Add(Money.Zero, new Script(OpcodeType.OP_RETURN, Op.GetPushOp(rskData)));
         }
