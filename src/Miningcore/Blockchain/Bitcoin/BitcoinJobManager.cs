@@ -698,7 +698,11 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
             var noHeight = await cf.Run(con => auxBlockRepo.GetBlocksWithoutHeightAsync(con, poolConfig.Id, rskConfig.Id, 50, ct));
             foreach(var block in noHeight)
             {
-                if(string.IsNullOrEmpty(block.AuxBlockHash)) continue;
+                if(string.IsNullOrEmpty(block.AuxBlockHash))
+                {
+                    logger.Warn(() => $"[rsk-confirm] Block id={block.Id} has no AuxBlockHash — skipping height heal");
+                    continue;
+                }
                 var hexHash = block.AuxBlockHash.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? block.AuxBlockHash : "0x" + block.AuxBlockHash;
                 var br = await rskManager.Rpc.ExecuteAsync<JToken>(logger, "eth_getBlockByHash", ct, new object[] { hexHash, false });
                 if(br.Error != null || br.Response == null || br.Response.Type == JTokenType.Null) continue;
@@ -713,7 +717,11 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
             var pending = await cf.Run(con => auxBlockRepo.GetPendingAsync(con, poolConfig.Id, rskConfig.Id, 200, ct));
             foreach(var block in pending)
             {
-                if(block.BlockHeight == null) continue;
+                if(block.BlockHeight == null)
+                {
+                    logger.Warn(() => $"[rsk-confirm] Block id={block.Id} ({block.AuxBlockHash?[..Math.Min(8, block.AuxBlockHash?.Length ?? 0)]}) has no BlockHeight — skipping confirmation");
+                    continue;
+                }
                 var blockHeight = (long)block.BlockHeight.Value;
                 var confirmations = currentHeight - blockHeight + 1;
                 if(confirmations < 0) continue;
