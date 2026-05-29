@@ -14,6 +14,7 @@ public class AuxBlock
     public string Miner { get; set; }
     public string Worker { get; set; }
     public string Source { get; set; }
+    public double? Difficulty { get; set; }
     public string SubmittedVia { get; set; }
     public string InfoLink { get; set; }
     public int RequiredConfirmations { get; set; }
