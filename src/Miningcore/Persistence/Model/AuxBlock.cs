@@ -17,5 +17,6 @@ public class AuxBlock
     public string Source { get; set; }
     public string SubmittedVia { get; set; }
     public double? Difficulty { get; set; }
+    public double? NetworkDifficulty { get; set; }
     public DateTime Created { get; set; }
 }

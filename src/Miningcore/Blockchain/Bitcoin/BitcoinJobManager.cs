@@ -19,6 +19,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NLog;
 using System.Collections.Concurrent;
+using System.Numerics;
 using System.Reactive.Linq;
 using static Miningcore.Util.ActionUtils;
 
@@ -48,6 +49,14 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
         if(cf != null) return;
         cf = ctx.Resolve<IConnectionFactory>();
         auxBlockRepo = ctx.Resolve<IAuxBlockRepository>();
+    }
+
+    private static double? AuxNetworkDifficulty(AuxBlockData auxBlock)
+    {
+        if(auxBlock?.TargetValue == null) return null;
+        var targetBigInt = new BigInteger(auxBlock.TargetValue.ToBytes(), isUnsigned: true);
+        if(targetBigInt.IsZero) return null;
+        return (double) new Miningcore.Util.BigRational(BitcoinConstants.Diff1, targetBigInt);
     }
 
     protected override object[] GetBlockTemplateParams()
@@ -443,6 +452,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                                     Source = clusterConfig.ClusterName,
                                     SubmittedVia = "live",
                                     Difficulty = share.HashDifficulty > 0 ? (double?)share.HashDifficulty : null,
+                                    NetworkDifficulty = AuxNetworkDifficulty(auxBlock),
                                     Created = clock.Now,
                                 };
 
@@ -510,6 +520,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                                 Source = clusterConfig.ClusterName,
                                 SubmittedVia = "live",
                                 Difficulty = share.HashDifficulty > 0 ? (double?)share.HashDifficulty : null,
+                                NetworkDifficulty = AuxNetworkDifficulty(auxBlock),
                                 Created = clock.Now,
                             };
 
