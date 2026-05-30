@@ -742,28 +742,44 @@ public class BitcoinJob
 
     protected virtual Money CreateFounderOutputs(Transaction tx, Money reward)
     {
-        if (founderParameters.Founder != null)
+        if(founderParameters == null)
+            return reward;
+
+        var founderOutputAdded = false;
+
+        if(founderParameters.Founder != null && founderParameters.Founder.Type != JTokenType.Null)
         {
             Founder[] founders;
-            if (founderParameters.Founder.Type == JTokenType.Array)
+            if(founderParameters.Founder.Type == JTokenType.Array)
                 founders = founderParameters.Founder.ToObject<Founder[]>();
             else
                 founders = new[] { founderParameters.Founder.ToObject<Founder>() };
 
             if(founders != null)
             {
-                foreach(var Founder in founders)
+                foreach(var founder in founders)
                 {
-                    if(!string.IsNullOrEmpty(Founder.Payee))
+                    if(founder != null && !string.IsNullOrEmpty(founder.Payee))
                     {
-                        var payeeAddress = BitcoinUtils.AddressToDestination(Founder.Payee, network);
-                        var payeeReward = Founder.Amount;
+                        var payeeAddress = BitcoinUtils.AddressToDestination(founder.Payee, network);
+                        var payeeReward = founder.Amount;
 
                         tx.Outputs.Add(payeeReward, payeeAddress);
                         reward -= payeeReward;
+                        founderOutputAdded = true;
                     }
                 }
             }
+        }
+
+        // Separate check so FounderReward is used even when Founder was present but empty (fxtc-style)
+        if(!founderOutputAdded && founderParameters.FounderReward != null && !string.IsNullOrEmpty(founderParameters.FounderReward.Founderpayee))
+        {
+            var payeeAddress = BitcoinUtils.AddressToDestination(founderParameters.FounderReward.Founderpayee, network);
+            var payeeReward = founderParameters.FounderReward.Amount;
+
+            tx.Outputs.Add(payeeReward, payeeAddress);
+            reward -= payeeReward;
         }
 
         return reward;
@@ -1122,7 +1138,26 @@ public class BitcoinJob
             payeeParameters = BlockTemplate.Extra.SafeExtensionDataAs<PayeeBlockTemplateExtra>();
 
         if(coin.HasFounderFee)
+        {
             founderParameters = BlockTemplate.Extra.SafeExtensionDataAs<FounderBlockTemplateExtra>();
+
+            // Direct extraction fallback: SafeExtensionDataAs silently swallows all exceptions.
+            // If it returned null or left FounderReward empty, pull directly from the raw Extra dict.
+            if(founderParameters?.FounderReward == null &&
+               BlockTemplate.Extra != null &&
+               BlockTemplate.Extra.TryGetValue("founderreward", out var frToken) &&
+               frToken is JToken frJToken && frJToken.Type != JTokenType.Null)
+            {
+                founderParameters ??= new FounderBlockTemplateExtra();
+                founderParameters.FounderReward = frJToken.ToObject<FounderRewardEntry>();
+            }
+
+            logger.Info(() => $"HasFounderFee: founderParameters={founderParameters != null}, " +
+                $"Founder={founderParameters?.Founder?.Type}, " +
+                $"FounderReward={founderParameters?.FounderReward != null}, " +
+                $"Payee={founderParameters?.FounderReward?.Founderpayee}, " +
+                $"Amount={founderParameters?.FounderReward?.Amount}");
+        }
 
         if(coin.HasFundReward)
             fundRewardParameters = BlockTemplate.Extra.SafeExtensionDataAs<FundRewardBlockTemplateExtra>();
