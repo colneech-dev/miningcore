@@ -347,7 +347,9 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
         var extraNonce2 = submitParams[2] as string;
         var nTime = submitParams[3] as string;
         var nonce = submitParams[4] as string;
-        var versionBits = context.VersionRollingMask.HasValue ? submitParams[5] as string : null;
+        // Read version bits if present (6th param). Some firmware (e.g. BM1370/AxeOS) applies version
+        // rolling to the ASIC chip even when the pool denied it, causing a header mismatch if ignored.
+        var versionBits = submitParams.Length > 5 ? submitParams[5] as string : null;
 
         if(string.IsNullOrEmpty(workerValue))
             throw new StratumException(StratumError.Other, "missing or invalid workername");
