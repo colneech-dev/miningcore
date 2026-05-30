@@ -507,7 +507,7 @@ public class BitcoinJob
         headerHasher.Digest(headerBytes, headerHash, (ulong) nTime, BlockTemplate, coin, networkParams);
         var headerValue = new uint256(headerHash);
 
-        logger.Info(() => $"[{worker.ConnectionId}] ShareDebug: extra1={extraNonce1} extra2={extraNonce2} nTime={nTime:X8} nonce={nonce:X8} versionBits={versionBits.HasValue ? versionBits.Value.ToStringHex8() : "none"} header={headerBytes.ToHexString()}");
+        logger.Info(() => $"[{worker.ConnectionId}] ShareDebug: extra1={extraNonce1} extra2={extraNonce2} nTime={nTime:X8} nonce={nonce:X8} versionBits={(versionBits.HasValue ? versionBits.Value.ToStringHex8() : "none")} header={headerBytes.ToHexString()}");
 
         // calc share-diff
         var diff1 = coin.Diff1 != null ? BigInteger.Parse(coin.Diff1, NumberStyles.HexNumber) : BitcoinConstants.Diff1; 
