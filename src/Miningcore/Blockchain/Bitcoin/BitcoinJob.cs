@@ -465,9 +465,15 @@ public class BitcoinJob
         // Build version
         var version = BlockTemplate.Version;
 
-        // Overt-ASIC boost
-        if(versionMask.HasValue && versionBits.HasValue)
-            version = (version & ~versionMask.Value) | (versionBits.Value & versionMask.Value);
+        // Apply version bits: if mask was negotiated, apply the mask; otherwise use submitted version
+        // directly (handles firmware that rolls version without formal pool negotiation).
+        if(versionBits.HasValue && versionBits.Value != 0)
+        {
+            if(versionMask.HasValue)
+                version = (version & ~versionMask.Value) | (versionBits.Value & versionMask.Value);
+            else
+                version = versionBits.Value;
+        }
 
 #pragma warning disable 618
         var blockHeader = new BlockHeader
@@ -1250,15 +1256,15 @@ public class BitcoinJob
 
         var nonceInt = uint.Parse(nonce, NumberStyles.HexNumber);
 
-        // validate version-bits (overt ASIC boost)
+        // validate version-bits (overt ASIC boost or firmware-applied rolling without negotiation)
         uint versionBitsInt = 0;
 
-        if(context.VersionRollingMask.HasValue && versionBits != null)
+        if(versionBits != null)
         {
             versionBitsInt = uint.Parse(versionBits, NumberStyles.HexNumber);
 
-            // enforce that only bits covered by current mask are changed by miner
-            if((versionBitsInt & ~context.VersionRollingMask.Value) != 0)
+            // Only enforce mask constraint when version rolling was formally negotiated
+            if(context.VersionRollingMask.HasValue && (versionBitsInt & ~context.VersionRollingMask.Value) != 0)
                 throw new StratumException(StratumError.Other, "rolling-version mask violation");
         }
 
