@@ -1,4 +1,5 @@
 using Miningcore.Blockchain;
+using Miningcore.Blockchain.Bitcoin.AuxPoW;
 using Miningcore.Configuration;
 
 namespace Miningcore.Mining;
@@ -12,4 +13,9 @@ public interface IMiningPool
     void Configure(PoolConfig pc, ClusterConfig cc);
     double HashrateFromShares(double shares, double interval);
     Task RunAsync(CancellationToken ct);
+}
+
+public interface IAuxMiningPool
+{
+    IReadOnlyList<AuxPowManager> AuxManagers { get; }
 }

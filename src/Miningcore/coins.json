@@ -6940,6 +6940,7 @@
         "coinbaseHasher": { "hash": "sha256d" },
         "headerHasher": { "hash": "sha256d" },
         "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
+        "hasFounderFee": true,
         "coinbaseMinConfimations": 100,
         "explorerBlockLink": "https://www.blockseek.io/fxtc/block/{0}",
         "explorerTxLink": "https://www.blockseek.io/fxtc/tx/{0}",

@@ -47,6 +47,7 @@ public abstract class BitcoinJobManagerBase<TJob> : JobManagerBase<TJob>
     protected bool hasLegacyDaemon;
     protected BitcoinPoolConfigExtra extraPoolConfig;
     protected List<AuxPowManager> auxPowManagers = new();
+    public IReadOnlyList<AuxPowManager> AuxManagers => auxPowManagers;
     protected RskManager rskManager;
     protected BitcoinPoolPaymentProcessingConfigExtra extraPoolPaymentProcessingConfig;
     protected DateTime? lastJobRebroadcast;

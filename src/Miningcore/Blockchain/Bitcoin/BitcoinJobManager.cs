@@ -378,6 +378,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
         if(share.IsBlockCandidate)
         {
             logger.Info(() => $"Submitting block {share.BlockHeight} [{share.BlockHash}]");
+            logger.Info(() => $"Block {share.BlockHeight} hex[0..160]: {blockHex[..Math.Min(160, blockHex.Length)]}");
 
             var acceptResponse = await SubmitBlockAsync(share, blockHex, ct);
 

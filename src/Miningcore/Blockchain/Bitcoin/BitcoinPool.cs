@@ -24,7 +24,7 @@ using static Miningcore.Util.ActionUtils;
 namespace Miningcore.Blockchain.Bitcoin;
 
 [CoinFamily(CoinFamily.Bitcoin)]
-public class BitcoinPool : PoolBase
+public class BitcoinPool : PoolBase, IAuxMiningPool
 {
     public BitcoinPool(IComponentContext ctx,
         JsonSerializerSettings serializerSettings,
@@ -42,6 +42,8 @@ public class BitcoinPool : PoolBase
     protected object currentJobParams;
     protected BitcoinJobManager manager;
     private BitcoinTemplate coin;
+
+    public IReadOnlyList<AuxPoW.AuxPowManager> AuxManagers => manager?.AuxManagers ?? Array.Empty<AuxPoW.AuxPowManager>();
 
     protected virtual async Task OnSubscribeAsync(StratumConnection connection, Timestamped<JsonRpcRequest> tsRequest)
     {
@@ -330,6 +332,7 @@ public class BitcoinPool : PoolBase
         var result = new Dictionary<string, object>();
 
         var extra = poolConfig.Extra.SafeExtensionDataAs<Configuration.BitcoinPoolConfigExtra>();
+        logger.Info(() => $"[{connection.ConnectionId}] OnConfigure: extra={extra != null}, EnableVersionRolling={extra?.EnableVersionRolling}, Extra keys=[{string.Join(",", poolConfig.Extra?.Keys ?? Enumerable.Empty<string>())}]");
 
         if(extensions != null)
         {
