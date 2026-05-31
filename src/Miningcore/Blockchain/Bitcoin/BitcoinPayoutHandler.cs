@@ -151,12 +151,17 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
 
                 else
                 {
+                    // Top-level Amount is 0 for watch-only coinbase outputs; fall back to summing details
+                    var reward = transactionInfo.Amount != 0
+                        ? transactionInfo.Amount
+                        : transactionInfo.Details.Sum(d => d.Amount);
+
                     switch(transactionInfo.Details[0].Category)
                     {
                         case "immature":
                             // update progress
                             block.ConfirmationProgress = Math.Min(1.0d, (double) transactionInfo.Confirmations / minConfirmations);
-                            block.Reward = transactionInfo.Amount;  // update actual block-reward from coinbase-tx
+                            block.Reward = reward;
                             result.Add(block);
 
                             messageBus.NotifyBlockConfirmationProgress(poolConfig.Id, block, coin);
@@ -166,7 +171,7 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
                             // matured and spendable coinbase transaction
                             block.Status = BlockStatus.Confirmed;
                             block.ConfirmationProgress = 1;
-                            block.Reward = transactionInfo.Amount;  // update actual block-reward from coinbase-tx
+                            block.Reward = reward;
                             result.Add(block);
 
                             logger.Info(() => $"[{LogCategory}] Unlocked block {block.BlockHeight} worth {FormatAmount(block.Reward)}");
