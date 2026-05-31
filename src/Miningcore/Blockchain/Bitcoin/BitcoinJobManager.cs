@@ -708,7 +708,20 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                 logger.Warn(() => $"[rsk-confirm] Could not get RSK block height: {blockNumResult.Error?.Message}");
                 return;
             }
-            var currentHeight = Convert.ToInt64(blockNumResult.Response.TrimStart('0', 'x').TrimStart('0', 'X'), 16);
+            var heightHexRaw = blockNumResult.Response;
+            if(heightHexRaw.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                heightHexRaw = heightHexRaw[2..];
+            if(string.IsNullOrEmpty(heightHexRaw))
+            {
+                logger.Warn(() => "[rsk-confirm] RSK node returned empty block height — skipping");
+                return;
+            }
+            var currentHeight = Convert.ToInt64(heightHexRaw, 16);
+            if(currentHeight == 0)
+            {
+                logger.Debug(() => "[rsk-confirm] RSK node at block 0 — not yet synced, skipping");
+                return;
+            }
 
             // Heal blocks missing height
             var noHeight = await cf.Run(con => auxBlockRepo.GetBlocksWithoutHeightAsync(con, poolConfig.Id, rskConfig.Id, 50, ct));
@@ -724,7 +737,9 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                 if(br.Error != null || br.Response == null || br.Response.Type == JTokenType.Null) continue;
                 var numHex = br.Response["number"]?.Value<string>();
                 if(string.IsNullOrEmpty(numHex)) continue;
-                block.BlockHeight = (ulong)Convert.ToInt64(numHex.TrimStart('0', 'x').TrimStart('0', 'X'), 16);
+                if(numHex.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) numHex = numHex[2..];
+                if(string.IsNullOrEmpty(numHex)) continue;
+                block.BlockHeight = (ulong)Convert.ToInt64(numHex, 16);
                 await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
                 logger.Info(() => $"[rsk-confirm] Healed height for {block.AuxBlockHash[..Math.Min(8, block.AuxBlockHash.Length)]}… → {block.BlockHeight}");
             }
