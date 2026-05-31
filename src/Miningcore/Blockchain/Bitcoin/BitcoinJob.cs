@@ -465,14 +465,13 @@ public class BitcoinJob
         // Build version
         var version = BlockTemplate.Version;
 
-        // Apply version bits: if mask was negotiated, apply the mask; otherwise use submitted version
-        // directly (handles firmware that rolls version without formal pool negotiation).
+        // Apply version bits using BIP320 delta-rolling: firmware submits rolled bits within
+        // the mask, not a full version replacement. Use the negotiated mask if available,
+        // otherwise fall back to the standard BIP320 pool mask (0x1fffe000).
         if(versionBits.HasValue && versionBits.Value != 0)
         {
-            if(versionMask.HasValue)
-                version = (version & ~versionMask.Value) | (versionBits.Value & versionMask.Value);
-            else
-                version = versionBits.Value;
+            var mask = versionMask ?? BitcoinConstants.VersionRollingPoolMask;
+            version = (version & ~mask) | (versionBits.Value & mask);
         }
 
 #pragma warning disable 618
@@ -506,8 +505,6 @@ public class BitcoinJob
         Span<byte> headerHash = stackalloc byte[32];
         headerHasher.Digest(headerBytes, headerHash, (ulong) nTime, BlockTemplate, coin, networkParams);
         var headerValue = new uint256(headerHash);
-
-        logger.Info(() => $"[{worker.ConnectionId}] ShareDebug: extra1={extraNonce1} extra2={extraNonce2} nTime={nTime:X8} nonce={nonce:X8} versionBits={(versionBits.HasValue ? versionBits.Value.ToStringHex8() : "none")} header={headerBytes.ToHexString()}");
 
         // calc share-diff
         var diff1 = coin.Diff1 != null ? BigInteger.Parse(coin.Diff1, NumberStyles.HexNumber) : BitcoinConstants.Diff1; 
