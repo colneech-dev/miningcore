@@ -8,7 +8,21 @@ public static class BitcoinUtils
 {
     public static IDestination AddressToDestination(string address, Network expectedNetwork)
     {
-        return BitcoinAddress.Create(address, expectedNetwork);
+        try
+        {
+            // For coins NBitcoin knows about this correctly handles P2PKH and P2SH.
+            return BitcoinAddress.Create(address, expectedNetwork);
+        }
+        catch(FormatException)
+        {
+            // NBitcoin doesn't recognise this altcoin's address prefix.
+            // Fall back to raw Base58Check decode. Only safe for P2PKH addresses —
+            // all pool addresses must be P2PKH (legacy), never P2SH or segwit.
+            var decoded = Encoders.Base58Check.DecodeData(address);
+            var networkVersionBytes = expectedNetwork.GetVersionBytes(Base58Type.PUBKEY_ADDRESS, true);
+            decoded = decoded.Skip(networkVersionBytes.Length).ToArray();
+            return new KeyId(decoded);
+        }
     }
 
     public static IDestination BechSegwitAddressToDestination(string address, Network expectedNetwork, string bechPrefix)
