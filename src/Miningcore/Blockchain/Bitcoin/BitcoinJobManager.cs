@@ -351,8 +351,6 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
         // rolling to the ASIC chip even when the pool denied it, causing a header mismatch if ignored.
         var versionBits = submitParams.Length > 5 ? submitParams[5] as string : null;
 
-        logger.Info(() => $"[{worker.ConnectionId}] SubmitDebug: params={submitParams.Length} job={jobId} en2={extraNonce2}(len={extraNonce2?.Length}) nTime={nTime} nonce={nonce} versionBits={versionBits ?? "none"}");
-
         if(string.IsNullOrEmpty(workerValue))
             throw new StratumException(StratumError.Other, "missing or invalid workername");
 
