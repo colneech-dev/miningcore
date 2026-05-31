@@ -9,8 +9,10 @@
 [Dd]ebug/
 [Rr]elease/
 x64/
-build/
 build.backup/
+build/runtimes/
+build/*.exe
+build/*.pdb
 [Bb]in/
 [Oo]bj/
 *.VC.db
