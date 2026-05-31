@@ -104,8 +104,9 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
                 .ToArray();
 
             // build command batch (block.TransactionConfirmationData is the hash of the blocks coinbase transaction)
+            // include_watchonly=true so watch-only addresses (e.g. P2PKH form of a P2SH pool address) are included in details
             var batch = page.Select(block => new RpcRequest(BitcoinCommands.GetTransaction,
-                new[] { block.TransactionConfirmationData })).ToArray();
+                new object[] { block.TransactionConfirmationData, true })).ToArray();
 
             // execute batch
             var results = await rpcClient.ExecuteBatchAsync(logger, ct, batch);
