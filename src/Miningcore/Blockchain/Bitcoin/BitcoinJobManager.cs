@@ -439,17 +439,50 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                             {
                                 EnsureAuxPersistence();
 
+                                // mnr_getWork returns hashForMergedMining, which is NOT the same as the
+                                // actual RSK block hash (keccak256 of header) stored on-chain.
+                                // After acceptance, resolve the actual block hash and height so that
+                                // eth_getBlockByHash and confirmation comparisons work correctly.
+                                string rskBlockHash = auxBlock.Hash;
+                                ulong? rskBlockHeight = null;
+
+                                var blockNumRes = await rskManager.Rpc.ExecuteAsync<string>(logger, "eth_blockNumber", ct);
+                                if(blockNumRes.Error == null && !string.IsNullOrEmpty(blockNumRes.Response))
+                                {
+                                    var numHex = blockNumRes.Response;
+                                    if(numHex.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) numHex = numHex[2..];
+                                    if(!string.IsNullOrEmpty(numHex))
+                                    {
+                                        rskBlockHeight = (ulong)Convert.ToInt64(numHex, 16);
+
+                                        var latestRes = await rskManager.Rpc.ExecuteAsync<JToken>(logger, "eth_getBlockByNumber", ct, new object[] { "latest", false });
+                                        if(latestRes.Error == null && latestRes.Response?.Type == JTokenType.Object)
+                                        {
+                                            var hmm = latestRes.Response["hashForMergedMining"]?.Value<string>() ?? "";
+                                            if(hmm.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) hmm = hmm[2..];
+                                            if(string.Equals(hmm, auxBlock.Hash, StringComparison.OrdinalIgnoreCase))
+                                            {
+                                                var actualHash = latestRes.Response["hash"]?.Value<string>() ?? "";
+                                                if(actualHash.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) actualHash = actualHash[2..];
+                                                if(!string.IsNullOrEmpty(actualHash))
+                                                    rskBlockHash = actualHash;
+                                            }
+                                            else
+                                                logger.Warn(() => $"[rsk] Latest block hashForMergedMining={hmm} doesn't match submitted={auxBlock.Hash} — block may have been superseded");
+                                        }
+                                    }
+                                }
+
                                 var record = new Persistence.Model.AuxBlock
                                 {
                                     PoolId = poolConfig.Id,
                                     ChainId = rskManager.Config.Id,
                                     ChainName = rskManager.Config.Name,
-                                    BlockHeight = auxBlock.Height > 0 ? (ulong?)auxBlock.Height : null,
-                                    AuxBlockHash = auxBlock.Hash,
+                                    BlockHeight = rskBlockHeight,
+                                    AuxBlockHash = rskBlockHash,
                                     ParentBlockHash = share.BlockHash,
                                     Status = Persistence.Model.BlockStatus.Pending,
                                     ConfirmationProgress = 0,
-                                    Reward = auxBlock.CoinbaseValue > 0 ? (decimal)auxBlock.CoinbaseValue / 100_000_000m : null,
                                     Miner = share.Miner,
                                     Worker = share.Worker,
                                     Source = clusterConfig.ClusterName,
@@ -460,7 +493,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                                 };
 
                                 _ = cf.RunTx(async (con, tx) => await auxBlockRepo.InsertAsync(con, tx, record))
-                                    .ContinueWith(t => logger.Error(t.Exception, () => $"Failed to persist RSK block {auxBlock.Hash}"),
+                                    .ContinueWith(t => logger.Error(t.Exception, () => $"Failed to persist RSK block {rskBlockHash}"),
                                         TaskContinuationOptions.OnlyOnFaulted);
                             }
                             catch(Exception ex)
