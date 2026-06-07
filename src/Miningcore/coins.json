@@ -7087,5 +7087,22 @@
         "explorerBlockLink": "https://explore.bitcoingold.site/block-height/$height$",
         "explorerTxLink": "https://explore.bitcoingold.site/tx/{0}",
         "explorerAccountLink": "https://explore.bitcoingold.site/address/{0}"
+    },
+    "cheetahcoin": {
+        "name": "Cheetahcoin",
+        "canonicalName": "Cheetahcoin",
+        "symbol": "CHTA",
+        "family": "bitcoin",
+        "website": "https://cheetahcoin.org/",
+        "coinbaseHasher": { "hash": "sha256d" },
+        "headerHasher": { "hash": "sha256d" },
+        "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
+        "shareMultiplier": 1,
+        "coinbaseMinConfimations": 100,
+        "targetBlockTime": 120,
+        "addressPrefix": { "pubkeyHash": 28, "scriptHash": 5 },
+        "explorerBlockLink": "http://chtaexplorer.mooo.com:3002/block/$hash$",
+        "explorerTxLink": "http://chtaexplorer.mooo.com:3002/tx/{0}",
+        "explorerAccountLink": "http://chtaexplorer.mooo.com:3002/address/{0}"
     }
 }

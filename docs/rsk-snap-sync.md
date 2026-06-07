@@ -89,13 +89,15 @@ EOF
 ## 4. Start RSKj
 
 ```bash
-java -Xmx3g \
+java -Xmx6g \
   -Drsk.conf.file=/home/colin/.rsk/node.conf \
   -cp /home/colin/rsk.jar:/home/colin/ForkDetectionPatch.jar \
   co.rsk.Start &
 ```
 
 **Note:** RSKj logs to `logs/rsk.log` in whichever directory you run the command from — not to `~/.rsk/`. Run from a known location or `cd ~` first.
+
+**Important:** `-Xmx6g` is required. The trie recovery phase at the end of snap sync will throw `OutOfMemoryError: Java heap space` with only 3g.
 
 ---
 
@@ -167,7 +169,7 @@ Should return the current block close to the chain tip within a few minutes of s
 
 ## Notes
 
-- RSKj uses ~3GB RAM (`-Xmx3g`). Reduce to `-Xmx2g` if WSL is memory-constrained.
+- RSKj requires at least 6GB heap (`-Xmx6g`). The trie recovery phase will OOM with 3g. WSL needs ~8GB RAM available.
 - The database directory (`~/.rsk/database/`) will grow to ~10–20GB after a full snap sync.
 - Snap sync downloads state at the chain tip, then fills in historical headers backwards. `eth_blockNumber` may stay at `0x0` until the state phase completes even though sync is progressing.
 - The `logs/rsk.log` location is relative to the working directory when java was launched, not `~/.rsk/`.
