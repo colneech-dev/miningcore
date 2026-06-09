@@ -67,7 +67,9 @@ public class RskManager : IDisposable
 
         try
         {
-            var response = await rpc.ExecuteAsync<JToken>(logger, "mnr_getWork", ct, null);
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(8));
+            var response = await rpc.ExecuteAsync<JToken>(logger, "mnr_getWork", cts.Token, null);
 
             if(response.Error != null)
             {

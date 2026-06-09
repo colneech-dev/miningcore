@@ -52,7 +52,10 @@ public class RpcClient
         AutomaticDecompression = DecompressionMethods.All,
 
         ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true,
-    });
+    })
+    {
+        Timeout = TimeSpan.FromSeconds(30),
+    };
 
     #region API-Surface
 
