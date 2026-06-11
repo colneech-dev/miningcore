@@ -1,0 +1,78 @@
+{
+    "logging": {
+        "level": "info",
+        "enableConsoleLog": true,
+        "enableConsoleColors": true,
+        "logBaseDirectory": "",
+        "perPoolLogFile": false
+    },
+    "banning": {
+        "manager": "Integrated",
+        "banOnJunkReceive": true,
+        "banOnInvalidShares": false
+    },
+    "notifications": {
+        "enabled": false
+    },
+    "persistence": {
+        "postgres": {
+            "host": "127.0.0.1",
+            "port": 5432,
+            "user": "miningcore",
+            "password": "password",
+            "database": "miningcore"
+        }
+    },
+    "paymentProcessing": {
+        "enabled": false,
+        "interval": 600,
+        "shareRecoveryFile": "recovered-shares.txt"
+    },
+    "api": {
+        "enabled": true,
+        "listenAddress": "127.0.0.1",
+        "port": 4000
+    },
+    "pools": [{
+        "id": "dgb-odo-regtest",
+        "enabled": true,
+        "coin": "digibyte-odocrypt",
+
+        "//": "Replace with an address from THIS node: digibyte-cli ... getnewaddress",
+        "address": "REPLACE_WITH_NODE_ADDRESS",
+        "rewardRecipients": [],
+
+        "blockRefreshInterval": 500,
+        "jobRebroadcastTimeout": 10,
+        "clientConnectionTimeout": 600,
+
+        "banning": { "enabled": false },
+
+        "ports": {
+            "3052": {
+                "listenAddress": "0.0.0.0",
+                "difficulty": 0.001,
+                "varDiff": {
+                    "minDiff": 0.001,
+                    "targetTime": 15,
+                    "retargetTime": 90,
+                    "variancePercent": 30
+                }
+            }
+        },
+
+        "daemons": [
+            {
+                "//": "regtest RPC port; testnet=14022, mainnet=14022 (rpcport in digibyte.conf)",
+                "host": "127.0.0.1",
+                "port": 18443,
+                "user": "user",
+                "password": "pass",
+                "//zmq": "optional but recommended for instant block detection",
+                "zmqBlockNotifySocket": "tcp://127.0.0.1:28332"
+            }
+        ],
+
+        "paymentProcessing": { "enabled": false }
+    }]
+}
