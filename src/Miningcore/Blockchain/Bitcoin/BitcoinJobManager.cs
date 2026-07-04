@@ -94,7 +94,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
         do
         {
             var response = await rpc.ExecuteAsync<BlockTemplate>(logger,
-                BitcoinCommands.GetBlockTemplate, ct, GetBlockTemplateParams());
+                BitcoinCommands.GetBlockTemplate, ct, extraPoolConfig?.GBTArgs ?? (object) GetBlockTemplateParams());
 
             var isSynched = response.Error == null;
 
