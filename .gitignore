@@ -13,6 +13,10 @@ build.backup/
 build/runtimes/
 build/*.exe
 build/*.pdb
+build/*.dll
+build/*.deps.json
+build/*.runtimeconfig.json
+build/coins.json
 [Bb]in/
 [Oo]bj/
 *.VC.db
