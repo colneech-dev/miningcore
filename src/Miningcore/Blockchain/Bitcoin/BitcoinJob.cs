@@ -458,20 +458,40 @@ public class BitcoinJob
         return submissions.TryAdd(key, true);
     }
 
+    private uint GetVersionRollingMask(uint? versionMask = null)
+    {
+        if(versionMask.HasValue)
+            return versionMask.Value;
+
+        if(extraPoolConfig?.VersionRollingMask != null)
+            return uint.Parse(extraPoolConfig.VersionRollingMask, NumberStyles.HexNumber);
+
+        return BitcoinConstants.VersionRollingPoolMask;
+    }
+
+    private uint GetBaseVersion(uint? versionMask = null)
+    {
+        var version = BlockTemplate.Version;
+
+        if(extraPoolConfig?.EnableVersionRolling != false)
+            version &= ~GetVersionRollingMask(versionMask);
+
+        return version;
+    }
+
     protected byte[] SerializeHeader(Span<byte> coinbaseHash, uint nTime, uint nonce, uint? versionMask, uint? versionBits)
     {
         // build merkle-root
         var merkleRoot = mt.WithFirst(coinbaseHash.ToArray());
 
-        // Build version
-        var version = BlockTemplate.Version;
+        // Build version from the stripped job version and apply miner-submitted rolling bits
+        // using masked-merge semantics. This keeps shares consistent with the job version sent
+        // to miners and avoids collisions when the rolling region overlaps an AsicBoost bit.
+        var version = GetBaseVersion(versionMask);
 
-        // Apply version bits using BIP320 delta-rolling: firmware submits rolled bits within
-        // the mask, not a full version replacement. Use the negotiated mask if available,
-        // otherwise fall back to the standard BIP320 pool mask (0x1fffe000).
         if(versionBits.HasValue && versionBits.Value != 0)
         {
-            var mask = versionMask ?? BitcoinConstants.VersionRollingPoolMask;
+            var mask = versionMask ?? GetVersionRollingMask();
             version = (version & ~mask) | (versionBits.Value & mask);
         }
 
@@ -1217,6 +1237,8 @@ public class BitcoinJob
         BuildMerkleBranches();
         BuildCoinbase();
 
+        var jobVersion = GetBaseVersion();
+
         jobParams = new object[]
         {
             JobId,
@@ -1224,7 +1246,7 @@ public class BitcoinJob
             coinbaseInitialHex,
             coinbaseFinalHex,
             merkleBranchesHex,
-            BlockTemplate.Version.ToStringHex8(),
+            jobVersion.ToStringHex8(),
             BlockTemplate.Bits,
             BlockTemplate.CurTime.ToStringHex8(),
             false
