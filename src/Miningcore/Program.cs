@@ -668,6 +668,12 @@ public class Program : BackgroundService
         Console.WriteLine();
     }
 
+    private static bool IsRunningInContainer()
+    {
+        return Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") == "true" ||
+               File.Exists("/.dockerenv");
+    }
+
     private static void ConfigureLogging()
     {
         var config = clusterConfig.Logging;
@@ -706,7 +712,9 @@ public class Program : BackgroundService
                 loggingConfig.AddRule(level, NLog.LogLevel.Fatal, target, "Microsoft.AspNetCore.*", true);
             }
 
-            if(config.EnableConsoleLog || isShareRecoveryMode)
+            var enableConsoleLog = config.EnableConsoleLog || isShareRecoveryMode || IsRunningInContainer();
+
+            if(enableConsoleLog)
             {
                 if(config.EnableConsoleColors)
                 {
