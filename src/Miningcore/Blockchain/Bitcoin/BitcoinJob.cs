@@ -70,6 +70,7 @@ public class BitcoinJob
 
     protected static byte[] sha256Empty = new byte[32];
     protected uint txVersion = 1u; // transaction version (currently 1) - see https://en.bitcoin.it/wiki/Transaction
+    private const double MinimumShareDifficultyRatio = 0.97d;
 
     protected static uint txInputCount = 1u;
     protected static uint txInPrevOutIndex = (uint) (Math.Pow(2, 32) - 1);
@@ -489,6 +490,14 @@ public class BitcoinJob
             return blockHeader.ToBytes();
     }
 
+    private static bool IsShareDifficultyAcceptable(double shareDiff, double requiredDifficulty)
+    {
+        // Some miners and daemons can report work that is slightly under the pool's exact target
+        // due to client/daemon differences or timing. A small tolerance avoids false low-difficulty
+        // rejects while still keeping the pool strict enough to reject clearly weak shares.
+        return shareDiff >= requiredDifficulty * MinimumShareDifficultyRatio;
+    }
+
     protected virtual (Share Share, string BlockHex, List<(AuxBlockData AuxBlock, byte[] HeaderBytes, byte[] Coinbase)> AuxCandidates) ProcessShareInternal(
         StratumConnection worker, string extraNonce2, uint nTime, uint nonce, uint? versionBits)
     {
@@ -516,14 +525,14 @@ public class BitcoinJob
         var isBlockCandidate = headerValue <= blockTargetValue;
 
         // test if share meets at least workers current difficulty
-        if(!isBlockCandidate && ratio < 0.99)
+        if(!isBlockCandidate && !IsShareDifficultyAcceptable(shareDiff, stratumDifficulty))
         {
             // check if share matched the previous difficulty from before a vardiff retarget
             if(context.VarDiff?.LastUpdate != null && context.PreviousDifficulty.HasValue)
             {
                 ratio = shareDiff / context.PreviousDifficulty.Value;
 
-                if(ratio < 0.99)
+                if(!IsShareDifficultyAcceptable(shareDiff, context.PreviousDifficulty.Value))
                     throw new StratumException(StratumError.LowDifficultyShare, $"low difficulty share ({shareDiff})");
 
                 // use previous difficulty
@@ -1195,13 +1204,10 @@ public class BitcoinJob
         this.headerHasher = headerHasher;
         this.blockHasher = blockHasher;
 
-        if(!string.IsNullOrEmpty(BlockTemplate.Target))
-            blockTargetValue = new uint256(BlockTemplate.Target);
-        else
-        {
-            var tmp = new Target(BlockTemplate.Bits.HexToByteArray());
-            blockTargetValue = tmp.ToUInt256();
-        }
+        // Always use Bits field for target calculation - some nodes (like DGB v9) return Target in wrong byte order
+        // Bits is the standard compact target format that's guaranteed to be correct
+        var tmp = new Target(BlockTemplate.Bits.HexToByteArray());
+        blockTargetValue = tmp.ToUInt256();
 
         previousBlockHashReversedHex = BlockTemplate.PreviousBlockhash
             .HexToByteArray()
