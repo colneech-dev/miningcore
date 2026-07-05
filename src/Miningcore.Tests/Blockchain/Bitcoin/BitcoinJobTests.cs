@@ -38,6 +38,28 @@ public class BitcoinJobTests : TestBase
     }
 
     [Fact]
+    public void Process_Share_Within_Tolerance_Is_Accepted()
+    {
+        var submitParams = JsonConvert.DeserializeObject<object[]>("[\"yXHmbak4AdgK5vWamwqFtEijn2NpgLvmi4\",\"00000001\",\"01000000\",\"63445774\",\"51036775\"]", jsonSerializerSettings);
+        var extraNonce2 = submitParams[2] as string;
+        var nTime = submitParams[3] as string;
+        var nonce = submitParams[4] as string;
+
+        var (job, worker) = CreateJob();
+        var (share, _) = job.ProcessShare(worker, extraNonce2, nTime, nonce);
+
+        Assert.NotNull(share);
+
+        var (job2, worker2) = CreateJob();
+        worker2.ContextAs<BitcoinWorkerContext>().Difficulty = share.HashDifficulty / 0.98d;
+
+        var (share2, _) = job2.ProcessShare(worker2, extraNonce2, nTime, nonce);
+
+        Assert.NotNull(share2);
+        Assert.Equal(share.HashDifficulty, share2.HashDifficulty);
+    }
+
+    [Fact]
     public void Process_Duplicate_Submission()
     {
         var (job, worker) = CreateJob();
