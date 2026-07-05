@@ -22,7 +22,6 @@ RUN bash build-libs-linux.sh /native-output
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 2: .NET build
-# Only needs the .NET SDK — no C/C++ toolchain required.
 # ─────────────────────────────────────────────────────────────────────────────
 FROM ubuntu:24.04 AS build
 ENV DEBIAN_FRONTEND=noninteractive
@@ -34,17 +33,22 @@ RUN apt-get update && apt-get install -y dotnet-sdk-8.0 && apt-get clean
 
 WORKDIR /app
 COPY . .
-RUN dotnet publish src/Miningcore/Miningcore.csproj -c Release --framework net8.0 -p:SkipNativeLibBuild=true
 
-# Inject pre-built native .so files alongside the binary in the build output.
-COPY --from=native-builder /native-output/*.so ./src/Miningcore/bin/Release/net8.0/
+# FIX: Publish explicitly to an isolated /out directory to clean up the pathing
+RUN dotnet publish src/Miningcore/Miningcore.csproj -c Release --framework net8.0 -p:SkipNativeLibBuild=true -o /out
+
+# FIX: Copy pre-built native .so files directly into that unified publication directory
+COPY --from=native-builder /native-output/*.so /out/
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 3: Runtime
 # ─────────────────────────────────────────────────────────────────────────────
 FROM mcr.microsoft.com/dotnet/aspnet:8.0-noble AS runtime
 WORKDIR /app
-COPY --from=build /app/src/Miningcore/bin/Release/net8.0 .
+
+# FIX: Copy everything cleanly out of the unified /out folder
+COPY --from=build /out .
+
 RUN apt-get update && apt-get install -y libsodium23 libzmq5 curl && \
     ln -s /usr/lib/x86_64-linux-gnu/libzmq.so.5 /usr/lib/x86_64-linux-gnu/libzmq.so && \
     rm -rf /var/lib/apt/lists/*
