@@ -219,6 +219,18 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                     isNew = true;
             }
 
+            // Refresh Hathor work and detect changes
+            AuxBlockData currentHathorAuxBlock = null;
+            if(hathorManager != null)
+            {
+                await hathorManager.RefreshAsync(ct);
+                currentHathorAuxBlock = hathorManager.CurrentAuxBlock;
+
+                if(!isNew && !forceUpdate && job?.HathorAuxBlock?.Hash != null &&
+                   !string.Equals(job.HathorAuxBlock.Hash, currentHathorAuxBlock?.Hash, StringComparison.OrdinalIgnoreCase))
+                    isNew = true;
+            }
+
             if(isNew || forceUpdate)
             {
                 job = CreateJob();
@@ -228,7 +240,8 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                     ShareMultiplier, coin.CoinbaseHasherValue, coin.HeaderHasherValue,
                     !isPoS ? coin.BlockHasherValue : coin.PoSBlockHasherValue ?? coin.BlockHasherValue,
                     currentAuxBlocks,
-                    currentRskAuxBlock);
+                    currentRskAuxBlock,
+                    currentHathorAuxBlock);
 
                 if(isNew || forceUpdate)
                     submittedAuxHashes.Clear();
@@ -406,7 +419,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
         }
 
         // Submit to any aux chains (merged mining) if this share met their targets
-        if(share.AuxCandidates?.Count > 0 && (auxPowManagers.Count > 0 || rskManager != null))
+        if(share.AuxCandidates?.Count > 0 && (auxPowManagers.Count > 0 || rskManager != null || hathorManager != null))
         {
             var submittingJob = job;
             foreach(var (auxBlock, headerBytes, coinbase) in share.AuxCandidates)
@@ -510,6 +523,60 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                     continue;
                 }
 
+                // Hathor uses its own submit protocol — route by chainId
+                if(hathorManager != null && auxBlock.ChainId == hathorManager.Config.ChainId)
+                {
+                    try
+                    {
+                        logger.Info(() => $"Submitting merged block to {hathorManager.Config.Name}");
+
+                        var merkleBranch = submittingJob?.MerkleBranchSteps ?? new List<byte[]>();
+                        var (hathorAccepted, hathorBlockHash, hathorHeight) = await hathorManager.SubmitBlockAsync(
+                            auxBlock.Hash, headerBytes, coinbase, merkleBranch, ct);
+
+                        if(hathorAccepted)
+                        {
+                            try
+                            {
+                                EnsureAuxPersistence();
+
+                                var record = new Persistence.Model.AuxBlock
+                                {
+                                    PoolId = poolConfig.Id,
+                                    ChainId = hathorManager.Config.Id,
+                                    ChainName = hathorManager.Config.Name,
+                                    BlockHeight = hathorHeight > 0 ? (ulong?) hathorHeight : null,
+                                    AuxBlockHash = hathorBlockHash,
+                                    ParentBlockHash = share.BlockHash,
+                                    Status = Persistence.Model.BlockStatus.Pending,
+                                    ConfirmationProgress = 0,
+                                    Miner = share.Miner,
+                                    Worker = share.Worker,
+                                    Source = clusterConfig.ClusterName,
+                                    SubmittedVia = "live",
+                                    Difficulty = share.HashDifficulty > 0 ? (double?) share.HashDifficulty : null,
+                                    NetworkDifficulty = AuxNetworkDifficulty(auxBlock),
+                                    Created = clock.Now,
+                                };
+
+                                _ = cf.RunTx(async (con, tx) => await auxBlockRepo.InsertAsync(con, tx, record))
+                                    .ContinueWith(t => logger.Error(t.Exception, () => $"Failed to persist Hathor block {hathorBlockHash}"),
+                                        TaskContinuationOptions.OnlyOnFaulted);
+                            }
+                            catch(Exception ex)
+                            {
+                                logger.Error(ex, () => $"Failed to persist Hathor block {auxBlock.Hash}");
+                            }
+                        }
+                    }
+                    catch(Exception ex)
+                    {
+                        logger.Error(ex, () => $"Error submitting Hathor merged block: {ex.Message}");
+                    }
+
+                    continue;
+                }
+
                 // Standard AuxPoW submission
                 var manager = auxPowManagers.FirstOrDefault(m => string.Equals(m.CurrentAuxBlock?.Hash, auxBlock.Hash, StringComparison.OrdinalIgnoreCase));
                 if(manager == null)
@@ -589,6 +656,9 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
         if(rskManager != null)
             _ = rskManager.RefreshAsync(CancellationToken.None);
 
+        if(hathorManager != null)
+            _ = hathorManager.RefreshAsync(CancellationToken.None);
+
         return share;
     }
 
@@ -596,7 +666,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
     {
         await base.PostStartInitAsync(ct);
 
-        if(auxPowManagers.Count > 0)
+        if(auxPowManagers.Count > 0 || rskManager != null || hathorManager != null)
         {
             EnsureAuxPersistence();
 
@@ -725,6 +795,79 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
 
         if(rskManager != null)
             await ConfirmRskBlocksAsync(ct);
+
+        if(hathorManager != null)
+            await ConfirmHathorBlocksAsync(ct);
+    }
+
+    private async Task ConfirmHathorBlocksAsync(CancellationToken ct)
+    {
+        var config = hathorManager.Config;
+        if(config.RequiredConfirmations <= 0)
+            return;
+
+        try
+        {
+            var tipHeight = hathorManager.TipHeight;
+            if(tipHeight <= 0)
+                return;
+
+            var pending = await cf.Run(con => auxBlockRepo.GetPendingAsync(con, poolConfig.Id, config.Id, 50, ct));
+
+            foreach(var block in pending)
+            {
+                if(string.IsNullOrEmpty(block.AuxBlockHash))
+                    continue;
+
+                var (exists, voided, height) = await hathorManager.CheckBlockAsync(block.AuxBlockHash, ct);
+
+                if(!exists)
+                {
+                    // Give the node a grace period; if the block never appears it was not adopted
+                    if(clock.Now - block.Created > TimeSpan.FromHours(2))
+                    {
+                        block.Status = Persistence.Model.BlockStatus.Orphaned;
+                        block.ConfirmationProgress = 0;
+                        await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
+                        logger.Info(() => $"[aux-confirm] [{config.Id}] Block {block.AuxBlockHash[..8]}… never appeared on-chain — orphaned");
+                    }
+                    continue;
+                }
+
+                if(voided)
+                {
+                    block.Status = Persistence.Model.BlockStatus.Orphaned;
+                    block.ConfirmationProgress = 0;
+                    await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
+                    logger.Info(() => $"[aux-confirm] [{config.Id}] Block {block.AuxBlockHash[..8]}… voided — orphaned");
+                    continue;
+                }
+
+                if(height > 0 && block.BlockHeight == null)
+                    block.BlockHeight = (ulong) height;
+
+                var blockHeight = (long) (block.BlockHeight ?? (ulong) height);
+                var confirmations = tipHeight - blockHeight;
+                var progress = Math.Min(1.0, (double) confirmations / config.RequiredConfirmations);
+
+                if(progress >= 1.0)
+                {
+                    block.Status = Persistence.Model.BlockStatus.Confirmed;
+                    block.ConfirmationProgress = 1;
+                    logger.Info(() => $"[aux-confirm] [{config.Id}] Block {block.AuxBlockHash[..8]}… confirmed at height {blockHeight}");
+                }
+                else
+                {
+                    block.ConfirmationProgress = progress;
+                }
+
+                await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
+            }
+        }
+        catch(Exception ex)
+        {
+            logger.Warn(() => $"[aux-confirm] [{config.Id}] Check failed: {ex.Message}");
+        }
     }
 
     private async Task ConfirmRskBlocksAsync(CancellationToken ct)
