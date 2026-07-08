@@ -199,14 +199,19 @@ public class HathorManager : IDisposable
             return (false, null, 0);
         }
 
-        var auxPow = HathorSerializer.BuildAuxPowBytes(headerBytes, head, tail, (IReadOnlyList<byte[]>) merkleBranch);
+        // Hathor's BitcoinAuxPow expects merkle path links in DISPLAY (reversed) byte order —
+        // its fold (_merkle_concat) reverses them back to internal before hashing. Our
+        // MerkleBranchSteps are internal-order (stratum convention), so reverse each.
+        var displayBranch = merkleBranch.Select(h => h.Reverse().ToArray()).ToList();
+
+        var auxPow = HathorSerializer.BuildAuxPowBytes(headerBytes, head, tail, displayBranch);
 
         var blockBytes = new byte[work.Funds.Length + work.Graph.Length + auxPow.Length];
         work.Funds.CopyTo(blockBytes, 0);
         work.Graph.CopyTo(blockBytes, work.Funds.Length);
         auxPow.CopyTo(blockBytes, work.Funds.Length + work.Graph.Length);
 
-        var hathorBlockHash = HathorSerializer.ComputeHathorBlockHash(headerBytes, head, baseHash, tail, (IReadOnlyList<byte[]>) merkleBranch);
+        var hathorBlockHash = HathorSerializer.ComputeHathorBlockHash(headerBytes, head, baseHash, tail, displayBranch);
         var hathorBlockHashHex = hathorBlockHash.ToHexString();
 
         try
