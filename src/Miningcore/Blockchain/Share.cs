@@ -114,5 +114,5 @@ public class Share
     /// Populated by BitcoinJob.ProcessShare when a share meets an aux chain target.
     /// </summary>
     [ProtoIgnore]
-    public List<(AuxBlockData AuxBlock, byte[] HeaderBytes, byte[] Coinbase)> AuxCandidates { get; set; }
+    public List<(AuxBlockData AuxBlock, byte[] HeaderBytes, byte[] Coinbase, List<byte[]> MerkleBranch)> AuxCandidates { get; set; }
 }

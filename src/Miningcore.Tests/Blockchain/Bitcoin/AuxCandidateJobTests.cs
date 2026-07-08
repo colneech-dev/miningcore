@@ -187,9 +187,10 @@ public class AuxCandidateJobTests : TestBase
         var (share, _) = job.ProcessShare(worker, "01000000", "63445774", "00000000");
 
         Assert.NotNull(share.AuxCandidates);
-        var (auxBlock, headerBytes, coinbase) = share.AuxCandidates[0];
+        var (auxBlock, headerBytes, coinbase, merkleBranch) = share.AuxCandidates[0];
         Assert.Equal(80, headerBytes.Length);
         Assert.NotEmpty(coinbase);
         Assert.Equal(1, auxBlock.ChainId);
+        Assert.NotNull(merkleBranch);
     }
 }

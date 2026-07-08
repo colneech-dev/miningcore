@@ -214,6 +214,18 @@ public class HathorManager : IDisposable
         var hathorBlockHash = HathorSerializer.ComputeHathorBlockHash(headerBytes, head, baseHash, tail, displayBranch);
         var hathorBlockHashHex = hathorBlockHash.ToHexString();
 
+        // Self-check: when coinbase + branch are consistent with the header, the reconstructed
+        // hash equals the parent block hash in display order. A mismatch means the node will
+        // reject with {"result":false} — log it loudly so the cause is visible.
+        using(var sha = System.Security.Cryptography.SHA256.Create())
+        {
+            var parentDisplay = sha.ComputeHash(sha.ComputeHash(headerBytes)).Reverse().ToArray().ToHexString();
+            if(!string.Equals(parentDisplay, hathorBlockHashHex, StringComparison.OrdinalIgnoreCase))
+                logger.Warn(() => $"[{config.Id}] AuxPow reconstruction mismatch! parentHeaderHash={parentDisplay} reconstructed={hathorBlockHashHex} branchLen={merkleBranch.Count} — merkle branch does not match this coinbase/header");
+            else
+                logger.Info(() => $"[{config.Id}] AuxPow reconstruction verified: {parentDisplay[..16]}... (branchLen={merkleBranch.Count})");
+        }
+
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -238,7 +250,11 @@ public class HathorManager : IDisposable
             if(accepted)
                 logger.Info(() => $"[{config.Id}] Hathor merged block ACCEPTED! hash={hathorBlockHashHex[..16]}... height={work.Height}");
             else
-                logger.Warn(() => $"[{config.Id}] Hathor block rejected: {Truncate(body, 300)}");
+            {
+                logger.Warn(() => $"[{config.Id}] Hathor block rejected: {Truncate(body, 300)} (templateAge={(DateTimeOffset.UtcNow - work.FetchedAt).TotalSeconds:F1}s weight={work.Weight:F2})");
+                // Full submitted payload for offline post-mortem
+                logger.Info(() => $"[{config.Id}] rejected hexdata: {blockBytes.ToHexString()}");
+            }
 
             invalidated = true;
             return (accepted, hathorBlockHashHex, work.Height);
