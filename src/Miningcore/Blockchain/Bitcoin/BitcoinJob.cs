@@ -40,6 +40,7 @@ public class BitcoinJob
     protected BitcoinPoolConfigExtra extraPoolConfig;
     protected AuxBlockData[] auxBlocks;    // standard aux chain work for merge mining (multi-chain tree)
     protected AuxBlockData rskAuxBlock;  // RSK standalone commitment (separate from aux tree)
+    protected AuxBlockData hathorAuxBlock;  // Hathor standalone commitment (separate from aux tree)
     private BitcoinTemplate.BitcoinNetworkParams networkParams;
     protected readonly ConcurrentDictionary<string, bool> submissions = new(StringComparer.OrdinalIgnoreCase);
     protected uint256 blockTargetValue;
@@ -429,6 +430,20 @@ public class BitcoinJob
             tx.Outputs.Add(Money.Zero, new Script(OpcodeType.OP_RETURN, Op.GetPushOp(rskData)));
         }
 
+        // Hathor merge mining: append OP_RETURN output with "Hath" + mining base hash.
+        // Hathor requires the magic to IMMEDIATELY precede the hash and to not occur
+        // earlier in the serialized coinbase (verify_magic_number). Placing it in the
+        // LAST output keeps the maximum amount of coinbase bytes ahead of it, and an
+        // OP_RETURN output consumes no scriptSig budget (same rationale as RSK above).
+        if(hathorAuxBlock?.Hash != null)
+        {
+            var hathorData = new byte[4 + 32]; // "Hath" (4) + mining base hash (32)
+            Hathor.HathorSerializer.MagicNumber.CopyTo(hathorData, 0);
+            // Raw sha256d bytes as computed from the template — committed verbatim, no reversal.
+            hathorAuxBlock.Hash.HexToByteArray().CopyTo(hathorData, 4);
+            tx.Outputs.Add(Money.Zero, new Script(OpcodeType.OP_RETURN, Op.GetPushOp(hathorData)));
+        }
+
         return tx;
     }
 
@@ -592,6 +607,14 @@ public class BitcoinJob
             auxCandidates ??= new();
             auxCandidates.Add((rskAuxBlock, headerBytes.ToArray(), coinbase));
             logger.Info(() => $"[{worker.ConnectionId}] RSK merged mining candidate: hash={rskAuxBlock.Hash[..Math.Min(16, rskAuxBlock.Hash.Length)]}...");
+        }
+
+        // Check Hathor target (standalone coinbase commitment, separate from aux tree)
+        if(hathorAuxBlock?.TargetValue != null && headerValue <= hathorAuxBlock.TargetValue)
+        {
+            auxCandidates ??= new();
+            auxCandidates.Add((hathorAuxBlock, headerBytes.ToArray(), coinbase));
+            logger.Info(() => $"[{worker.ConnectionId}] Hathor merged mining candidate: baseHash={hathorAuxBlock.Hash[..Math.Min(16, hathorAuxBlock.Hash.Length)]}...");
         }
 
         if(isBlockCandidate)
@@ -1099,6 +1122,7 @@ public class BitcoinJob
     public List<byte[]> MerkleBranchSteps => mt?.Steps?.ToList() ?? new List<byte[]>();
     public AuxBlockData[] AuxBlocks => auxBlocks;
     public AuxBlockData RskAuxBlock => rskAuxBlock;
+    public AuxBlockData HathorAuxBlock => hathorAuxBlock;
     public byte[][] AuxMerkleNodes => auxMerkleNodes;
     public int AuxMerkleTreeSize => auxMerkleTreeSize;
     public uint AuxMerkleTreeNonce => auxMerkleTreeNonce;
@@ -1110,7 +1134,8 @@ public class BitcoinJob
         bool isPoS, double shareMultiplier, IHashAlgorithm coinbaseHasher,
         IHashAlgorithm headerHasher, IHashAlgorithm blockHasher,
         AuxBlockData[] auxBlocks = null,
-        AuxBlockData rskAuxBlock = null)
+        AuxBlockData rskAuxBlock = null,
+        AuxBlockData hathorAuxBlock = null)
     {
         Contract.RequiresNonNull(blockTemplate);
         Contract.RequiresNonNull(pc);
@@ -1126,6 +1151,7 @@ public class BitcoinJob
         this.extraPoolConfig = extraPoolConfig;
         this.auxBlocks = auxBlocks;
         this.rskAuxBlock = rskAuxBlock;
+        this.hathorAuxBlock = hathorAuxBlock;
         networkParams = coin.GetNetwork(network.ChainName);
         txVersion = coin.CoinbaseTxVersion;
         this.network = network;
