@@ -109,8 +109,10 @@ public static class HathorSerializer
     }
 
     /// <summary>
-    /// Block.get_mining_base_hash(): sha256d( sha256(funds) || sha256(graph + headers) ).
+    /// Block.get_mining_base_hash(): sha256d_hash( sha256(funds) || sha256(graph + headers) ).
     /// Block templates carry no headers, so the second hash is just sha256(graph).
+    /// CRITICAL: hathor's merged_mining.bitcoin.sha256d_hash REVERSES the double-sha digest
+    /// (encode_revbytes) — so the committed base hash is in reversed (display) byte order.
     /// </summary>
     public static byte[] ComputeMiningBaseHash(byte[] funds, byte[] graph)
     {
@@ -122,7 +124,9 @@ public static class HathorSerializer
         fundsHash.CopyTo(miningHeader, 0);
         graphHash.CopyTo(miningHeader, 32);
 
-        return sha.ComputeHash(sha.ComputeHash(miningHeader));
+        var digest = sha.ComputeHash(sha.ComputeHash(miningHeader));
+        Array.Reverse(digest);
+        return digest;
     }
 
     /// <summary>
@@ -172,38 +176,57 @@ public static class HathorSerializer
 
     /// <summary>
     /// BitcoinAuxPow.calculate_hash(): the on-chain Hathor block hash.
-    /// coinbase_txid = sha256d(head || base_hash || tail);
-    /// merkle_root = REVERSED( fold(coinbase_txid, path) );
-    /// hash = sha256d( header[0..36] || merkle_root || header[68..80] ).
+    /// Hathor's bitcoin.py operates entirely on REVERSED (display-order) hashes:
+    ///   sha256d_hash(x) = REVERSED(sha256(sha256(x)))
+    ///   fold step: sha256d_hash( REVERSED(left) || REVERSED(right) )
+    /// coinbase_txid = sha256d_hash(coinbase); root = fold(txid, path[display order]);
+    /// merkle_root  = REVERSED(root)  (back to internal order for the header);
+    /// hash = sha256d_hash( header[0..36] || merkle_root || header[68..80] ) — display order.
+    /// When the submitted parts are consistent this equals the parent block's display hash.
     /// </summary>
-    public static byte[] ComputeHathorBlockHash(byte[] header, byte[] coinbaseHead, byte[] baseHash, byte[] coinbaseTail, IReadOnlyList<byte[]> merklePath)
+    public static byte[] ComputeHathorBlockHash(byte[] header, byte[] coinbaseHead, byte[] baseHash, byte[] coinbaseTail, IReadOnlyList<byte[]> merklePathDisplay)
     {
         using var sha = SHA256.Create();
-
-        byte[] Sha256d(byte[] input) => sha.ComputeHash(sha.ComputeHash(input));
 
         var coinbase = new byte[coinbaseHead.Length + baseHash.Length + coinbaseTail.Length];
         coinbaseHead.CopyTo(coinbase, 0);
         baseHash.CopyTo(coinbase, coinbaseHead.Length);
         coinbaseTail.CopyTo(coinbase, coinbaseHead.Length + baseHash.Length);
 
-        var current = Sha256d(coinbase);
-        foreach(var link in merklePath)
-        {
-            var buf = new byte[64];
-            current.CopyTo(buf, 0);
-            link.CopyTo(buf, 32);
-            current = Sha256d(buf);
-        }
-
-        var reversedRoot = current.Reverse().ToArray();
+        var txidDisplay = sha.ComputeHash(sha.ComputeHash(coinbase)).Reverse().ToArray();
+        var internalRoot = FoldMerkleToInternalRoot(txidDisplay, merklePathDisplay);
 
         var final = new byte[80];
         Array.Copy(header, 0, final, 0, 36);
-        reversedRoot.CopyTo(final, 36);
+        internalRoot.CopyTo(final, 36);
         Array.Copy(header, 68, final, 68, 12);
 
-        return Sha256d(final);
+        var digest = sha.ComputeHash(sha.ComputeHash(final));
+        Array.Reverse(digest);
+        return digest;
+    }
+
+    /// <summary>
+    /// hathor bitcoin.py build_merkle_root_from_path with display-order inputs,
+    /// result reversed back to internal order (validated against hathor's own
+    /// cpu-miner doctest vector).
+    /// </summary>
+    public static byte[] FoldMerkleToInternalRoot(byte[] txidDisplay, IReadOnlyList<byte[]> merklePathDisplay)
+    {
+        using var sha = SHA256.Create();
+
+        var current = txidDisplay;
+        foreach(var link in merklePathDisplay)
+        {
+            var buf = new byte[64];
+            current.Reverse().ToArray().CopyTo(buf, 0);
+            link.Reverse().ToArray().CopyTo(buf, 32);
+            var d = sha.ComputeHash(sha.ComputeHash(buf));
+            Array.Reverse(d);
+            current = d;
+        }
+
+        return current.Reverse().ToArray();
     }
 
     /// <summary>Bitcoin-style varint.</summary>
