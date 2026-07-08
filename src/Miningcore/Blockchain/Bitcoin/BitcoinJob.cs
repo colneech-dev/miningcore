@@ -533,7 +533,7 @@ public class BitcoinJob
         return shareDiff >= requiredDifficulty * MinimumShareDifficultyRatio;
     }
 
-    protected virtual (Share Share, string BlockHex, List<(AuxBlockData AuxBlock, byte[] HeaderBytes, byte[] Coinbase)> AuxCandidates) ProcessShareInternal(
+    protected virtual (Share Share, string BlockHex, List<(AuxBlockData AuxBlock, byte[] HeaderBytes, byte[] Coinbase, List<byte[]> MerkleBranch)> AuxCandidates) ProcessShareInternal(
         StratumConnection worker, string extraNonce2, uint nTime, uint nonce, uint? versionBits)
     {
         var context = worker.ContextAs<BitcoinWorkerContext>();
@@ -587,7 +587,7 @@ public class BitcoinJob
         };
 
         // Check aux chain targets for merged mining
-        List<(AuxBlockData AuxBlock, byte[] HeaderBytes, byte[] Coinbase)> auxCandidates = null;
+        List<(AuxBlockData AuxBlock, byte[] HeaderBytes, byte[] Coinbase, List<byte[]> MerkleBranch)> auxCandidates = null;
         if(auxBlocks != null)
         {
             foreach(var aux in auxBlocks)
@@ -595,7 +595,7 @@ public class BitcoinJob
                 if(aux?.TargetValue != null && headerValue <= aux.TargetValue)
                 {
                     auxCandidates ??= new();
-                    auxCandidates.Add((aux, headerBytes.ToArray(), coinbase));
+                    auxCandidates.Add((aux, headerBytes.ToArray(), coinbase, MerkleBranchSteps));
                     logger.Info(() => "[" + worker.ConnectionId + "] Merged mining candidate: meets aux target for " + (aux.Hash.Length > 16 ? aux.Hash[..16] : aux.Hash) + "...");
                 }
             }
@@ -605,7 +605,7 @@ public class BitcoinJob
         if(rskAuxBlock?.TargetValue != null && headerValue <= rskAuxBlock.TargetValue)
         {
             auxCandidates ??= new();
-            auxCandidates.Add((rskAuxBlock, headerBytes.ToArray(), coinbase));
+            auxCandidates.Add((rskAuxBlock, headerBytes.ToArray(), coinbase, MerkleBranchSteps));
             logger.Info(() => $"[{worker.ConnectionId}] RSK merged mining candidate: hash={rskAuxBlock.Hash[..Math.Min(16, rskAuxBlock.Hash.Length)]}...");
         }
 
@@ -613,7 +613,7 @@ public class BitcoinJob
         if(hathorAuxBlock?.TargetValue != null && headerValue <= hathorAuxBlock.TargetValue)
         {
             auxCandidates ??= new();
-            auxCandidates.Add((hathorAuxBlock, headerBytes.ToArray(), coinbase));
+            auxCandidates.Add((hathorAuxBlock, headerBytes.ToArray(), coinbase, MerkleBranchSteps));
             logger.Info(() => $"[{worker.ConnectionId}] Hathor merged mining candidate: baseHash={hathorAuxBlock.Hash[..Math.Min(16, hathorAuxBlock.Hash.Length)]}...");
         }
 

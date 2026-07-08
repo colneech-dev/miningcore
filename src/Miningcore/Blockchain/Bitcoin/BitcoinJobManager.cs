@@ -422,7 +422,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
         if(share.AuxCandidates?.Count > 0 && (auxPowManagers.Count > 0 || rskManager != null || hathorManager != null))
         {
             var submittingJob = job;
-            foreach(var (auxBlock, headerBytes, coinbase) in share.AuxCandidates)
+            foreach(var (auxBlock, headerBytes, coinbase, candidateBranch) in share.AuxCandidates)
             {
                 var dedupKey = $"{auxBlock.ChainId}:{auxBlock.Hash}";
                 if(!submittedAuxHashes.TryAdd(dedupKey, 1))
@@ -439,7 +439,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                         logger.Info(() => $"Submitting merged block to {rskManager.Config.Name}");
 
                         var coinbaseTxHex = coinbase.ToHexString();
-                        var merkleBranch = submittingJob?.MerkleBranchSteps ?? new List<byte[]>();
+                        var merkleBranch = candidateBranch ?? submittingJob?.MerkleBranchSteps ?? new List<byte[]>();
                         var headerHex = headerBytes.ToHexString();
 
                         logger.Info(() => $"RSK submit: hash={auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]}... coinbaseBranchLen={merkleBranch.Count}");
@@ -530,7 +530,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                     {
                         logger.Info(() => $"Submitting merged block to {hathorManager.Config.Name}");
 
-                        var merkleBranch = submittingJob?.MerkleBranchSteps ?? new List<byte[]>();
+                        var merkleBranch = candidateBranch ?? submittingJob?.MerkleBranchSteps ?? new List<byte[]>();
                         var (hathorAccepted, hathorBlockHash, hathorHeight) = await hathorManager.SubmitBlockAsync(
                             auxBlock.Hash, headerBytes, coinbase, merkleBranch, ct);
 
@@ -590,7 +590,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                     logger.Info(() => "Submitting merged block to " + manager.Config.Name);
 
                     var coinbaseTxHex = coinbase.ToHexString();
-                    var merkleBranch = submittingJob?.MerkleBranchSteps ?? new List<byte[]>();
+                    var merkleBranch = candidateBranch ?? submittingJob?.MerkleBranchSteps ?? new List<byte[]>();
                     var (auxBranch, auxIndex) = AuxPowSerializer.GetAuxMerkleBranch(
                         submittingJob?.AuxMerkleNodes,
                         submittingJob?.AuxMerkleTreeSize ?? 1,
