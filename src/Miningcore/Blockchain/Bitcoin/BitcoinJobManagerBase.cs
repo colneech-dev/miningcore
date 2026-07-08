@@ -49,6 +49,7 @@ public abstract class BitcoinJobManagerBase<TJob> : JobManagerBase<TJob>
     protected List<AuxPowManager> auxPowManagers = new();
     public IReadOnlyList<AuxPowManager> AuxManagers => auxPowManagers;
     protected RskManager rskManager;
+    protected Hathor.HathorManager hathorManager;
     protected BitcoinPoolPaymentProcessingConfigExtra extraPoolPaymentProcessingConfig;
     protected DateTime? lastJobRebroadcast;
     protected bool hasSubmitBlockMethod;
@@ -403,6 +404,13 @@ public abstract class BitcoinJobManagerBase<TJob> : JobManagerBase<TJob>
         {
             rskManager = new RskManager(auxExtra.RskChain, jsonSerializerSettings, messageBus);
             logger.Info(() => $"RSK merge mining configured for {auxExtra.RskChain.Name} (chainId={auxExtra.RskChain.ChainId})");
+        }
+
+        // Initialize Hathor manager if configured
+        if(auxExtra?.HathorChain != null)
+        {
+            hathorManager = new Hathor.HathorManager(auxExtra.HathorChain);
+            logger.Info(() => $"Hathor merge mining configured for {auxExtra.HathorChain.Name} (chainId={auxExtra.HathorChain.ChainId})");
         }
     }
 
