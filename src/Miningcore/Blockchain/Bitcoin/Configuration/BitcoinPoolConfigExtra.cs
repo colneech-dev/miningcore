@@ -76,4 +76,11 @@ public class BitcoinPoolConfigExtra
     /// but shares the same AuxPoW Merkle tree in the coinbase.
     /// </summary>
     public RSK.RskChainConfig RskChain { get; set; }
+
+    /// <summary>
+    /// Optional Hathor (HTR) merge mining configuration.
+    /// Hathor uses its own protocol (RFC 0006): a "Hath"+hash coinbase commitment and
+    /// funds||graph||aux_pow submission via the node HTTP API — no aux Merkle tree slot.
+    /// </summary>
+    public Hathor.HathorChainConfig HathorChain { get; set; }
 }
