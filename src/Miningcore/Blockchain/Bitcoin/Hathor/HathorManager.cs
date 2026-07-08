@@ -50,7 +50,8 @@ public class HathorManager : IDisposable
             throw new ArgumentException($"HathorChain '{config.Id}' has no payout address configured");
 
         var daemon = config.Daemons.First();
-        baseUrl = $"http://{daemon.Host}:{daemon.Port}/v1a/";
+        var scheme = daemon.Ssl ? "https" : "http";
+        baseUrl = $"{scheme}://{daemon.Host}:{daemon.Port}/v1a/";
         http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
         fetchInterval = TimeSpan.FromSeconds(config.PollIntervalSeconds > 0 ? config.PollIntervalSeconds : 5);
     }
