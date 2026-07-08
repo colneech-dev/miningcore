@@ -1065,7 +1065,7 @@
                 }
             ]
         },
-        "shareMultiplier": 256,
+        "shareMultiplier": 1,
         "blockTemplateRpcExtraParams": [
             "odo"
         ],
