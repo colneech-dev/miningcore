@@ -550,6 +550,8 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                                     ParentBlockHash = share.BlockHash,
                                     Status = Persistence.Model.BlockStatus.Pending,
                                     ConfirmationProgress = 0,
+                                    // Hathor uses 2 decimals: CoinbaseValue carries HTR cents
+                                    Reward = auxBlock.CoinbaseValue > 0 ? (decimal) auxBlock.CoinbaseValue / 100m : null,
                                     Miner = share.Miner,
                                     Worker = share.Worker,
                                     Source = clusterConfig.ClusterName,
