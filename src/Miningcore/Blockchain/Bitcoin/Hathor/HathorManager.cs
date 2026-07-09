@@ -129,6 +129,11 @@ public class HathorManager : IDisposable
             recentWorks[baseHashHex] = work;
             TrimRecentWorks();
 
+            // Sum of template outputs = block reward in HTR "cents" (Hathor uses 2 decimals,
+            // e.g. 200 = 2.00 HTR). Stored so the aux block record carries the reward.
+            var rewardCents = ((outputs ?? new JArray())
+                .Sum(o => o.Value<long?>("value") ?? 0));
+
             currentAuxBlock = new AuxBlockData
             {
                 // Raw sha256d bytes as hex; committed into the coinbase verbatim (no reversal)
@@ -138,6 +143,7 @@ public class HathorManager : IDisposable
                 // uint256 stores little-endian internally; target bytes are big-endian
                 TargetValue = new NBitcoin.uint256(targetBe.Reverse().ToArray()),
                 Height = (int) Math.Min(height, int.MaxValue),
+                CoinbaseValue = rewardCents,
                 FetchedAt = DateTimeOffset.UtcNow,
             };
 
