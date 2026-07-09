@@ -1005,22 +1005,36 @@ public class PoolApiController : ApiControllerBase
     private static void EnrichAuxBlockInfoLinks(Configuration.PoolConfig pool, Responses.AuxBlock[] blocks)
     {
         var bitcoinExtra = pool.Extra?.SafeExtensionDataAs<Blockchain.Bitcoin.Configuration.BitcoinPoolConfigExtra>();
-        if(bitcoinExtra?.AuxChains == null || bitcoinExtra.AuxChains.Length == 0)
+        if(bitcoinExtra == null)
             return;
 
-        var chainMap = bitcoinExtra.AuxChains
-            .ToDictionary(a => a.Id, a => a, StringComparer.OrdinalIgnoreCase);
+        // (explorerBlockLink, requiredConfirmations) per chain id — aux tree chains
+        // plus the standalone RSK and Hathor commitments, which live in their own config keys
+        var chainMap = new Dictionary<string, (string Link, int Confirmations)>(StringComparer.OrdinalIgnoreCase);
+
+        if(bitcoinExtra.AuxChains != null)
+            foreach(var a in bitcoinExtra.AuxChains)
+                chainMap[a.Id] = (a.ExplorerBlockLink, a.RequiredConfirmations);
+
+        if(bitcoinExtra.RskChain != null)
+            chainMap[bitcoinExtra.RskChain.Id] = (bitcoinExtra.RskChain.ExplorerBlockLink, bitcoinExtra.RskChain.RequiredConfirmations);
+
+        if(bitcoinExtra.HathorChain != null)
+            chainMap[bitcoinExtra.HathorChain.Id] = (bitcoinExtra.HathorChain.ExplorerBlockLink, bitcoinExtra.HathorChain.RequiredConfirmations);
+
+        if(chainMap.Count == 0)
+            return;
 
         foreach(var block in blocks)
         {
             if(!chainMap.TryGetValue(block.ChainId ?? "", out var chainCfg))
                 continue;
 
-            block.RequiredConfirmations = chainCfg.RequiredConfirmations > 0 ? chainCfg.RequiredConfirmations : 100;
+            block.RequiredConfirmations = chainCfg.Confirmations > 0 ? chainCfg.Confirmations : 100;
 
-            if(!string.IsNullOrEmpty(chainCfg.ExplorerBlockLink))
+            if(!string.IsNullOrEmpty(chainCfg.Link))
             {
-                var link = chainCfg.ExplorerBlockLink;
+                var link = chainCfg.Link;
                 if(block.AuxBlockHash != null) link = link.Replace("{hash}", block.AuxBlockHash);
                 if(block.BlockHeight.HasValue) link = link.Replace("{height}", block.BlockHeight.Value.ToString());
                 if(!link.Contains('{')) block.InfoLink = link;
