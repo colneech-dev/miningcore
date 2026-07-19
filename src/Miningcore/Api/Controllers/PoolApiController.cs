@@ -6,6 +6,7 @@ using Autofac;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ActionConstraints;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
+using Microsoft.Extensions.Caching.Memory;
 using Miningcore.Api.Extensions;
 using Miningcore.Api.Responses;
 using Miningcore.Blockchain;
@@ -28,22 +29,26 @@ public class PoolApiController : ApiControllerBase
     {
         statsRepo = ctx.Resolve<IStatsRepository>();
         blocksRepo = ctx.Resolve<IBlockRepository>();
+        auxBlocksRepo = ctx.Resolve<IAuxBlockRepository>();
         minerRepo = ctx.Resolve<IMinerRepository>();
         shareRepo = ctx.Resolve<IShareRepository>();
         paymentsRepo = ctx.Resolve<IPaymentRepository>();
         clock = ctx.Resolve<IMasterClock>();
         pools = ctx.Resolve<ConcurrentDictionary<string, IMiningPool>>();
+        cache = ctx.Resolve<IMemoryCache>();
         adcp = _adcp;
     }
 
     private readonly IStatsRepository statsRepo;
     private readonly IBlockRepository blocksRepo;
+    private readonly IAuxBlockRepository auxBlocksRepo;
     private readonly IPaymentRepository paymentsRepo;
     private readonly IMinerRepository minerRepo;
     private readonly IShareRepository shareRepo;
     private readonly IMasterClock clock;
     private readonly IActionDescriptorCollectionProvider adcp;
     private readonly ConcurrentDictionary<string, IMiningPool> pools;
+    private readonly IMemoryCache cache;
 
     private static readonly ILogger logger = LogManager.GetCurrentClassLogger();
 
@@ -52,6 +57,10 @@ public class PoolApiController : ApiControllerBase
     [HttpGet]
     public async Task<GetPoolsResponse> Get(CancellationToken ct, [FromQuery] uint topMinersRange = 24)
     {
+        var cacheKey = $"pools-summary-{topMinersRange}";
+        if(cache.TryGetValue(cacheKey, out GetPoolsResponse cached))
+            return cached;
+
         var response = new GetPoolsResponse
         {
             Pools = await Task.WhenAll(clusterConfig.Pools.Where(x => x.Enabled).Select(async config =>
@@ -70,18 +79,27 @@ public class PoolApiController : ApiControllerBase
                 result.TotalBlocks = await cf.Run(con => blocksRepo.GetPoolBlockCountAsync(con, config.Id, ct));
                 result.TotalConfirmedBlocks = await cf.Run(con => blocksRepo.GetTotalConfirmedBlocksAsync(con, config.Id, ct));
                 result.TotalPendingBlocks = await cf.Run(con => blocksRepo.GetTotalPendingBlocksAsync(con, config.Id, ct));
-                // get reward of the last confirmed block and set BlockReward
+                // get reward of the last confirmed block and set BlockReward; fall back to current job's coinbase value
                 result.BlockReward = await cf.Run(con => blocksRepo.GetLastConfirmedBlockRewardAsync(con, config.Id, ct));
+                if(result.BlockReward == 0 && pool != null)
+                    result.BlockReward = pool.NetworkStats?.BlockReward ?? 0;
                 var lastBlockTime = await cf.Run(con => blocksRepo.GetLastPoolBlockTimeAsync(con, config.Id, ct));
                 result.LastPoolBlockTime = lastBlockTime;
+
+                var auxExtra = config.Extra?.SafeExtensionDataAs<Blockchain.Bitcoin.Configuration.BitcoinPoolConfigExtra>();
+                if(auxExtra?.AuxChains is { Length: > 0 })
+                {
+                    result.TotalAuxBlocks = await cf.Run(con => auxBlocksRepo.GetPoolAuxBlockCountAsync(con, config.Id, ct));
+                    result.LastAuxBlockTime = await cf.Run(con => auxBlocksRepo.GetLastPoolAuxBlockTimeAsync(con, config.Id, ct));
+                }
 
                 var payoutConfig = config.PaymentProcessing;
                 result.PaymentProcessing.PayoutSchemeConfig = payoutConfig?.PayoutSchemeConfig.ToObject<ApiPoolPayoutSchemeConfig>();
                 // display block finder percentage only if PPLNSBF is activated
-                if(payoutConfig?.PayoutScheme != PayoutScheme.PPLNSBF)
+                if(payoutConfig?.PayoutScheme != PayoutScheme.PPLNSBF && result.PaymentProcessing?.PayoutSchemeConfig != null)
                     result.PaymentProcessing.PayoutSchemeConfig.BlockFinderPercentage = null;
 
-                if(lastBlockTime.HasValue)
+                if(lastBlockTime.HasValue && pool != null)
                 {
                     var startTime = lastBlockTime.Value;
                     var poolEffort = await cf.Run(con => shareRepo.GetEffortBetweenCreatedAsync(con, config.Id, pool.ShareMultiplier, startTime, clock.Now, ct));
@@ -99,6 +117,7 @@ public class PoolApiController : ApiControllerBase
             }).ToArray())
         };
 
+        cache.Set(cacheKey, response, TimeSpan.FromSeconds(15));
         return response;
     }
 
@@ -149,18 +168,27 @@ public class PoolApiController : ApiControllerBase
         response.Pool.TotalBlocks = await cf.Run(con => blocksRepo.GetPoolBlockCountAsync(con, pool.Id, ct));
         response.Pool.TotalConfirmedBlocks = await cf.Run(con => blocksRepo.GetTotalConfirmedBlocksAsync(con, pool.Id, ct));
         response.Pool.TotalPendingBlocks = await cf.Run(con => blocksRepo.GetTotalPendingBlocksAsync(con, pool.Id, ct));
-        // get reward of the last confirmed block and set BlockReward
+        // get reward of the last confirmed block and set BlockReward; fall back to current job's coinbase value
         response.Pool.BlockReward = await cf.Run(con => blocksRepo.GetLastConfirmedBlockRewardAsync(con, pool.Id, ct));
+        if(response.Pool.BlockReward == 0 && poolInstance != null)
+            response.Pool.BlockReward = poolInstance.NetworkStats?.BlockReward ?? 0;
         var lastBlockTime = await cf.Run(con => blocksRepo.GetLastPoolBlockTimeAsync(con, pool.Id, ct));
         response.Pool.LastPoolBlockTime = lastBlockTime;
+
+        var auxExtra = pool.Extra?.SafeExtensionDataAs<Blockchain.Bitcoin.Configuration.BitcoinPoolConfigExtra>();
+        if(auxExtra?.AuxChains is { Length: > 0 })
+        {
+            response.Pool.TotalAuxBlocks = await cf.Run(con => auxBlocksRepo.GetPoolAuxBlockCountAsync(con, pool.Id, ct));
+            response.Pool.LastAuxBlockTime = await cf.Run(con => auxBlocksRepo.GetLastPoolAuxBlockTimeAsync(con, pool.Id, ct));
+        }
 
         var payoutConfig = pool.PaymentProcessing;
         response.Pool.PaymentProcessing.PayoutSchemeConfig = payoutConfig?.PayoutSchemeConfig.ToObject<ApiPoolPayoutSchemeConfig>();
         // display block finder percentage only if PPLNSBF is activated
-        if(payoutConfig?.PayoutScheme != PayoutScheme.PPLNSBF)
+        if(payoutConfig?.PayoutScheme != PayoutScheme.PPLNSBF && response.Pool.PaymentProcessing?.PayoutSchemeConfig != null)
             response.Pool.PaymentProcessing.PayoutSchemeConfig.BlockFinderPercentage = null;
 
-        if(lastBlockTime.HasValue)
+        if(lastBlockTime.HasValue && poolInstance != null)
         {
             var startTime = lastBlockTime.Value;
             var poolEffort = await cf.Run(con => shareRepo.GetEffortBetweenCreatedAsync(con, pool.Id, poolInstance.ShareMultiplier, startTime, clock.Now, ct));
@@ -247,7 +275,7 @@ public class PoolApiController : ApiControllerBase
             .ToArray();
 
         // enrich blocks
-        var blockInfobaseDict = pool.Template.ExplorerBlockLinks;
+        var blockInfobaseDict = pool.Template?.ExplorerBlockLinks;
 
         foreach(var block in blocks)
         {
@@ -288,7 +316,7 @@ public class PoolApiController : ApiControllerBase
             .ToArray();
 
         // enrich blocks
-        var blockInfobaseDict = pool.Template.ExplorerBlockLinks;
+        var blockInfobaseDict = pool.Template?.ExplorerBlockLinks;
 
         foreach(var block in blocks)
         {
@@ -456,7 +484,7 @@ public class PoolApiController : ApiControllerBase
             .ToArray();
 
         // enrich blocks
-        var blockInfobaseDict = pool.Template.ExplorerBlockLinks;
+        var blockInfobaseDict = pool.Template?.ExplorerBlockLinks;
 
         foreach(var block in blocks)
         {
@@ -503,7 +531,7 @@ public class PoolApiController : ApiControllerBase
             .ToArray();
 
         // enrich blocks
-        var blockInfobaseDict = pool.Template.ExplorerBlockLinks;
+        var blockInfobaseDict = pool.Template?.ExplorerBlockLinks;
 
         foreach(var block in blocks)
         {
@@ -828,5 +856,189 @@ public class PoolApiController : ApiControllerBase
         // map
         var result = mapper.Map<Responses.WorkerPerformanceStatsContainer[]>(stats);
         return result;
+    }
+
+    [HttpGet("{poolId}/auxblocks")]
+    public async Task<Responses.AuxBlock[]> PagePoolAuxBlocksAsync(
+        string poolId, [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
+    {
+        var pool = GetPool(poolId);
+        var ct = HttpContext.RequestAborted;
+
+        var blockStates = state is { Length: > 0 } ?
+            state :
+            new[] { BlockStatus.Confirmed, BlockStatus.Pending, BlockStatus.Orphaned };
+
+        var blocks = (await cf.Run(con => auxBlocksRepo.PagePoolAuxBlocksAsync(con, poolId, blockStates, page, pageSize, ct)))
+            .Select(mapper.Map<Responses.AuxBlock>)
+            .ToArray();
+
+        EnrichAuxBlockInfoLinks(pool, blocks);
+        return blocks;
+    }
+
+    [HttpGet("{poolId}/miners/{address}/auxblocks")]
+    public async Task<Responses.AuxBlock[]> PageMinerAuxBlocksAsync(
+        string poolId, string address, [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
+    {
+        var pool = GetPool(poolId);
+        var ct = HttpContext.RequestAborted;
+
+        if(string.IsNullOrEmpty(address))
+            throw new ApiException("Invalid or missing miner address", System.Net.HttpStatusCode.NotFound);
+
+        var blockStates = state is { Length: > 0 } ?
+            state :
+            new[] { BlockStatus.Confirmed, BlockStatus.Pending, BlockStatus.Orphaned };
+
+        var blocks = (await cf.Run(con => auxBlocksRepo.PageMinerAuxBlocksAsync(con, poolId, address, blockStates, page, pageSize, ct)))
+            .Select(mapper.Map<Responses.AuxBlock>)
+            .ToArray();
+
+        EnrichAuxBlockInfoLinks(pool, blocks);
+        return blocks;
+    }
+
+    [HttpGet("/api/summary")]
+    public async Task<GetSummaryResponse> GetSummaryAsync(CancellationToken ct)
+    {
+        const string cacheKey = "api-summary";
+        if(cache.TryGetValue(cacheKey, out GetSummaryResponse cached))
+            return cached;
+
+        var todayUtc = DateTime.UtcNow.Date;
+
+        var poolEntries = await Task.WhenAll(clusterConfig.Pools.Where(x => x.Enabled).Select(async config =>
+        {
+            var stats = await cf.Run(con => statsRepo.GetLastPoolStatsAsync(con, config.Id, ct));
+            pools.TryGetValue(config.Id, out var poolInstance);
+
+            var totalBlocks = await cf.Run(con => blocksRepo.GetPoolBlockCountAsync(con, config.Id, ct));
+            var blocksToday = await cf.Run(con => blocksRepo.GetPoolBlockCountSinceAsync(con, config.Id, todayUtc, ct));
+            var lastBlockTime = await cf.Run(con => blocksRepo.GetLastPoolBlockTimeAsync(con, config.Id, ct));
+            var blockReward = await cf.Run(con => blocksRepo.GetLastConfirmedBlockRewardAsync(con, config.Id, ct));
+            if(blockReward == 0 && poolInstance != null)
+                blockReward = poolInstance.NetworkStats?.BlockReward ?? 0;
+
+            double? poolEffort = null;
+            if(lastBlockTime.HasValue && poolInstance != null)
+            {
+                var effort = await cf.Run(con => shareRepo.GetEffortBetweenCreatedAsync(con, config.Id, poolInstance.ShareMultiplier, lastBlockTime.Value, clock.Now, ct));
+                if(effort.HasValue)
+                    poolEffort = effort.Value;
+            }
+
+            SummaryMergeMineEntry[] mergeMinedCoins = null;
+            var bitcoinExtra = config.Extra?.SafeExtensionDataAs<Blockchain.Bitcoin.Configuration.BitcoinPoolConfigExtra>();
+            var entries = new List<SummaryMergeMineEntry>();
+            if(bitcoinExtra?.AuxChains is { Length: > 0 })
+                entries.AddRange(bitcoinExtra.AuxChains.Select(a => new SummaryMergeMineEntry { Id = a.Id, Name = a.Name ?? a.Id }));
+            if(bitcoinExtra?.RskChain != null)
+                entries.Add(new SummaryMergeMineEntry { Id = bitcoinExtra.RskChain.Id, Name = bitcoinExtra.RskChain.Name ?? bitcoinExtra.RskChain.Id });
+            if(entries.Count > 0)
+                mergeMinedCoins = entries.ToArray();
+
+            var auxBlocksToday = mergeMinedCoins != null
+                ? await cf.Run(con => auxBlocksRepo.GetPoolAuxBlockCountSinceAsync(con, config.Id, todayUtc, ct))
+                : 0;
+            var totalAuxBlocks = mergeMinedCoins != null
+                ? await cf.Run(con => auxBlocksRepo.GetPoolAuxBlockCountAsync(con, config.Id, ct))
+                : 0;
+            var lastAuxBlockTime = mergeMinedCoins != null
+                ? await cf.Run(con => auxBlocksRepo.GetLastPoolAuxBlockTimeAsync(con, config.Id, ct))
+                : null;
+
+            return new SummaryPoolEntry
+            {
+                Id = config.Id,
+                Scheme = config.PaymentProcessing?.PayoutScheme.ToString(),
+                ConnectedMiners = stats?.ConnectedMiners ?? 0,
+                ConnectedWorkers = stats?.ConnectedWorkers ?? 0,
+                PoolHashrate = stats?.PoolHashrate ?? 0,
+                NetworkHashrate = stats?.NetworkHashrate ?? 0,
+                NetworkDifficulty = stats?.NetworkDifficulty ?? 0,
+                BlockHeight = stats?.BlockHeight ?? 0,
+                PoolEffort = poolEffort,
+                LastPoolBlockTime = lastBlockTime,
+                BlockReward = blockReward,
+                Coin = new SummaryPoolCoin
+                {
+                    Symbol = config.Template?.Symbol,
+                    Algorithm = config.Template?.GetAlgorithmName()
+                },
+                BlocksToday = blocksToday,
+                TotalBlocks = totalBlocks,
+                AuxBlocksToday = auxBlocksToday,
+                TotalAuxBlocks = totalAuxBlocks,
+                LastAuxBlockTime = lastAuxBlockTime,
+                Fee = config.RewardRecipients != null ? (float) config.RewardRecipients.Sum(x => x.Percentage) : 0,
+                MinimumPayment = config.PaymentProcessing?.MinimumPayment ?? 0,
+                MergeMinedCoins = mergeMinedCoins
+            };
+        }).ToArray());
+
+        var totals = new SummaryTotals
+        {
+            TotalHashrate = poolEntries.Sum(p => p.PoolHashrate),
+            TotalMiners = poolEntries.Sum(p => p.ConnectedMiners),
+            TotalWorkers = poolEntries.Sum(p => p.ConnectedWorkers),
+            ActivePools = poolEntries.Count(p => p.ConnectedMiners > 0),
+            PoolCount = poolEntries.Length,
+            TotalBlocksAllTime = poolEntries.Sum(p => (long) p.TotalBlocks),
+            TotalBlocksToday = poolEntries.Sum(p => p.BlocksToday),
+            TotalAuxBlocksAllTime = poolEntries.Sum(p => p.TotalAuxBlocks),
+            TotalAuxBlocksToday = poolEntries.Sum(p => p.AuxBlocksToday)
+        };
+
+        var response = new GetSummaryResponse
+        {
+            GeneratedAt = clock.Now,
+            Stale = false,
+            Pools = poolEntries,
+            Totals = totals
+        };
+
+        cache.Set(cacheKey, response, TimeSpan.FromSeconds(15));
+        return response;
+    }
+
+    private static void EnrichAuxBlockInfoLinks(Configuration.PoolConfig pool, Responses.AuxBlock[] blocks)
+    {
+        var bitcoinExtra = pool.Extra?.SafeExtensionDataAs<Blockchain.Bitcoin.Configuration.BitcoinPoolConfigExtra>();
+        if(bitcoinExtra == null)
+            return;
+
+        // (explorerBlockLink, requiredConfirmations) per chain id — aux tree chains
+        // plus the standalone RSK and Hathor commitments, which live in their own config keys
+        var chainMap = new Dictionary<string, (string Link, int Confirmations)>(StringComparer.OrdinalIgnoreCase);
+
+        if(bitcoinExtra.AuxChains != null)
+            foreach(var a in bitcoinExtra.AuxChains)
+                chainMap[a.Id] = (a.ExplorerBlockLink, a.RequiredConfirmations);
+
+        if(bitcoinExtra.RskChain != null)
+            chainMap[bitcoinExtra.RskChain.Id] = (bitcoinExtra.RskChain.ExplorerBlockLink, bitcoinExtra.RskChain.RequiredConfirmations);
+
+        if(bitcoinExtra.HathorChain != null)
+            chainMap[bitcoinExtra.HathorChain.Id] = (bitcoinExtra.HathorChain.ExplorerBlockLink, bitcoinExtra.HathorChain.RequiredConfirmations);
+
+        if(chainMap.Count == 0)
+            return;
+
+        foreach(var block in blocks)
+        {
+            if(!chainMap.TryGetValue(block.ChainId ?? "", out var chainCfg))
+                continue;
+
+            block.RequiredConfirmations = chainCfg.Confirmations > 0 ? chainCfg.Confirmations : 100;
+
+            if(!string.IsNullOrEmpty(chainCfg.Link))
+            {
+                var link = chainCfg.Link;
+                if(block.AuxBlockHash != null) link = link.Replace("{hash}", block.AuxBlockHash);
+                if(block.BlockHeight.HasValue) link = link.Replace("{height}", block.BlockHeight.Value.ToString());
+                if(!link.Contains('{')) block.InfoLink = link;
+            }
+        }
     }
 }

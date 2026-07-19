@@ -52,7 +52,10 @@ public class RpcClient
         AutomaticDecompression = DecompressionMethods.All,
 
         ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true,
-    });
+    })
+    {
+        Timeout = TimeSpan.FromSeconds(30),
+    };
 
     #region API-Surface
 
@@ -69,7 +72,14 @@ public class RpcClient
             if(response.Result is JToken token)
                 return new RpcResponse<TResponse>(token.ToObject<TResponse>(serializer), response.Error);
 
-            return new RpcResponse<TResponse>((TResponse) response.Result, response.Error);
+            if(response.Result is TResponse directResult)
+                return new RpcResponse<TResponse>(directResult, response.Error);
+
+            // Wrap non-JToken, non-castable values (e.g. bool returned by submitauxblock)
+            if(response.Result != null)
+                return new RpcResponse<TResponse>(JToken.FromObject(response.Result).ToObject<TResponse>(serializer), response.Error);
+
+            return new RpcResponse<TResponse>(null, response.Error);
         }
 
         catch(TaskCanceledException)

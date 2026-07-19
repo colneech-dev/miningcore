@@ -1,3 +1,4 @@
+using Miningcore.Blockchain.Bitcoin.AuxPoW;
 using ProtoBuf;
 
 namespace Miningcore.Blockchain;
@@ -97,8 +98,21 @@ public class Share
     public double NetworkDifficulty { get; set; }
 
     /// <summary>
+    /// Actual difficulty of this specific hash (diff1 / hash). Only set for block candidates.
+    /// </summary>
+    [ProtoIgnore]
+    public double HashDifficulty { get; set; }
+
+    /// <summary>
     /// When the share was found
     /// </summary>
     [ProtoMember(15)]
     public DateTime Created { get; set; }
+
+    /// <summary>
+    /// Runtime-only: aux chain block candidates found alongside this share (not persisted).
+    /// Populated by BitcoinJob.ProcessShare when a share meets an aux chain target.
+    /// </summary>
+    [ProtoIgnore]
+    public List<(AuxBlockData AuxBlock, byte[] HeaderBytes, byte[] Coinbase, List<byte[]> MerkleBranch)> AuxCandidates { get; set; }
 }

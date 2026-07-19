@@ -31,6 +31,7 @@ CREATE TABLE blocks
         minereffort FLOAT NULL,
 	transactionconfirmationdata TEXT NOT NULL,
 	miner TEXT NULL,
+	worker TEXT NULL,
 	reward decimal(28,12) NULL,
     source TEXT NULL,
     hash TEXT NULL,
@@ -39,6 +40,30 @@ CREATE TABLE blocks
 
 CREATE INDEX IDX_BLOCKS_POOL_BLOCK_STATUS on blocks(poolid, blockheight, status);
 CREATE INDEX IDX_BLOCKS_POOL_BLOCK_TYPE on blocks(poolid, blockheight, type);
+
+CREATE TABLE auxblocks
+(
+    id                      BIGSERIAL       NOT NULL PRIMARY KEY,
+    poolid                  TEXT            NOT NULL,
+    chainid                 TEXT            NOT NULL,
+    chainname               TEXT            NULL,
+    blockheight             BIGINT          NULL,
+    auxblockhash            TEXT            NOT NULL,
+    parentblockhash         TEXT            NULL,
+    status                  TEXT            NOT NULL DEFAULT 'pending',
+    confirmationprogress    FLOAT           NOT NULL DEFAULT 0,
+    reward                  DECIMAL(28,12)  NULL,
+    miner                   TEXT            NULL,
+    worker                  TEXT            NULL,
+    source                  TEXT            NULL,
+    submittedvia            TEXT            NULL,
+    created                 TIMESTAMPTZ     NOT NULL
+);
+
+CREATE UNIQUE INDEX ux_auxblocks_pool_chain_hash ON auxblocks(poolid, chainid, auxblockhash);
+CREATE INDEX idx_auxblocks_pool_created ON auxblocks(poolid, created DESC);
+CREATE INDEX idx_auxblocks_miner ON auxblocks(poolid, miner);
+CREATE INDEX idx_auxblocks_status ON auxblocks(poolid, status);
 
 CREATE TABLE balances
 (
@@ -94,6 +119,7 @@ CREATE TABLE poolstats
 	id BIGSERIAL NOT NULL PRIMARY KEY,
 	poolid TEXT NOT NULL,
 	connectedminers INT NOT NULL DEFAULT 0,
+	connectedworkers INT NOT NULL DEFAULT 0,
 	poolhashrate DOUBLE PRECISION NOT NULL DEFAULT 0,
 	sharespersecond DOUBLE PRECISION NOT NULL DEFAULT 0,
 	networkhashrate DOUBLE PRECISION NOT NULL DEFAULT 0,

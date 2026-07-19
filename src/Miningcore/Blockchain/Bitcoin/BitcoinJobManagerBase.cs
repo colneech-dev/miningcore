@@ -15,6 +15,8 @@ using Miningcore.Time;
 using NBitcoin;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using Miningcore.Blockchain.Bitcoin.AuxPoW;
+using Miningcore.Blockchain.Bitcoin.RSK;
 using static Miningcore.Util.ActionUtils;
 
 namespace Miningcore.Blockchain.Bitcoin;
@@ -44,6 +46,10 @@ public abstract class BitcoinJobManagerBase<TJob> : JobManagerBase<TJob>
     public int maxActiveJobs { get; protected set; } = 4;
     protected bool hasLegacyDaemon;
     protected BitcoinPoolConfigExtra extraPoolConfig;
+    protected List<AuxPowManager> auxPowManagers = new();
+    public IReadOnlyList<AuxPowManager> AuxManagers => auxPowManagers;
+    protected RskManager rskManager;
+    protected Hathor.HathorManager hathorManager;
     protected BitcoinPoolPaymentProcessingConfigExtra extraPoolPaymentProcessingConfig;
     protected DateTime? lastJobRebroadcast;
     protected bool hasSubmitBlockMethod;
@@ -189,6 +195,10 @@ public abstract class BitcoinJobManagerBase<TJob> : JobManagerBase<TJob>
             .Select(x => GetJobParamsForStratum(x.IsNew))
             .Publish()
             .RefCount();
+
+        // Start ZMQ subscriptions for aux chains that have a socket configured
+        foreach(var manager in auxPowManagers)
+            manager.StartZmqSubscription(ct);
     }
 
     protected virtual async Task ShowDaemonSyncProgressAsync(CancellationToken ct)
@@ -376,6 +386,32 @@ public abstract class BitcoinJobManagerBase<TJob> : JobManagerBase<TJob>
         var jsonSerializerSettings = ctx.Resolve<JsonSerializerSettings>();
 
         rpc = new RpcClient(poolConfig.Daemons.First(), jsonSerializerSettings, messageBus, poolConfig.Id);
+
+        // Initialize aux chain managers for merge mining
+        var auxExtra = poolConfig.Extra.SafeExtensionDataAs<BitcoinPoolConfigExtra>();
+        if(auxExtra?.AuxChains?.Length > 0)
+        {
+            foreach(var auxChain in auxExtra.AuxChains)
+            {
+                var manager = new AuxPowManager(auxChain, jsonSerializerSettings, messageBus);
+                auxPowManagers.Add(manager);
+                logger.Info(() => "Aux merge mining configured for " + auxChain.Name + " (chainId=" + auxChain.ChainId + ")");
+            }
+        }
+
+        // Initialize RSK manager if configured
+        if(auxExtra?.RskChain != null)
+        {
+            rskManager = new RskManager(auxExtra.RskChain, jsonSerializerSettings, messageBus);
+            logger.Info(() => $"RSK merge mining configured for {auxExtra.RskChain.Name} (chainId={auxExtra.RskChain.ChainId})");
+        }
+
+        // Initialize Hathor manager if configured
+        if(auxExtra?.HathorChain != null)
+        {
+            hathorManager = new Hathor.HathorManager(auxExtra.HathorChain);
+            logger.Info(() => $"Hathor merge mining configured for {auxExtra.HathorChain.Name} (chainId={auxExtra.HathorChain.ChainId})");
+        }
     }
 
     protected override async Task<bool> AreDaemonsHealthyAsync(CancellationToken ct)

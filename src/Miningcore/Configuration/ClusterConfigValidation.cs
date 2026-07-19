@@ -1,4 +1,6 @@
 using FluentValidation;
+using Miningcore.Blockchain.Bitcoin.Configuration;
+using Miningcore.Extensions;
 using System.Security.Cryptography.X509Certificates;
 
 namespace Miningcore.Configuration;
@@ -186,6 +188,55 @@ public class PoolConfigValidator : AbstractValidator<PoolConfig>
 
         RuleForEach(j => j.Daemons)
             .SetValidator(new AuthenticatedNetworkEndpointConfigValidator<DaemonEndpointConfig>());
+
+        // Validate auxChains don't include the pool's own coin
+        RuleFor(j => j.Extra)
+            .Must((pool, extra, ctx) =>
+            {
+                var bitcoinExtra = extra?.SafeExtensionDataAs<BitcoinPoolConfigExtra>();
+                if(bitcoinExtra?.AuxChains != null)
+                {
+                    var selfAuxCoin = bitcoinExtra.AuxChains.FirstOrDefault(aux => aux.Id == pool.Coin);
+                    if(selfAuxCoin != null)
+                    {
+                        ctx.MessageFormatter.AppendArgument("coinId", pool.Coin);
+                        return false;
+                    }
+                }
+                return true;
+            })
+            .WithMessage("Pool cannot have itself ({coinId}) as an auxiliary coin");
+
+        // Validate each auxChain has required fields, unique ids, and valid chainId
+        RuleFor(j => j.Extra)
+            .Must((pool, extra, ctx) =>
+            {
+                var bitcoinExtra = extra?.SafeExtensionDataAs<BitcoinPoolConfigExtra>();
+                if(bitcoinExtra?.AuxChains != null)
+                {
+                    var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach(var aux in bitcoinExtra.AuxChains)
+                    {
+                        if(string.IsNullOrEmpty(aux.Id))
+                        {
+                            ctx.MessageFormatter.AppendArgument("issue", "auxChain entry is missing 'id'");
+                            return false;
+                        }
+                        if(!seenIds.Add(aux.Id))
+                        {
+                            ctx.MessageFormatter.AppendArgument("issue", $"duplicate auxChain id '{aux.Id}'");
+                            return false;
+                        }
+                        if(aux.Daemons == null || aux.Daemons.Length == 0)
+                        {
+                            ctx.MessageFormatter.AppendArgument("issue", $"auxChain '{aux.Id}' is missing daemons");
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            })
+            .WithMessage("AuxChain config error: {issue}");
     }
 }
 

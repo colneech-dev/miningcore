@@ -20,9 +20,9 @@ public class BlockRepository : IBlockRepository
         var mapped = mapper.Map<Entities.Block>(block);
 
         const string query =
-            @"INSERT INTO blocks(poolid, blockheight, networkdifficulty, status, type, transactionconfirmationdata,
+            @"INSERT INTO blocks(poolid, blockheight, networkdifficulty, difficulty, status, type, transactionconfirmationdata,
                 miner, worker, reward, effort, minereffort, confirmationprogress, source, hash, created)
-            VALUES(@poolid, @blockheight, @networkdifficulty, @status, @type, @transactionconfirmationdata,
+            VALUES(@poolid, @blockheight, @networkdifficulty, @difficulty, @status, @type, @transactionconfirmationdata,
                 @miner, @worker, @reward, @effort, @minereffort, @confirmationprogress, @source, @hash, @created)";
 
         await con.ExecuteAsync(query, mapped, tx);
@@ -176,6 +176,12 @@ public class BlockRepository : IBlockRepository
     {
         const string query = @"SELECT created FROM blocks WHERE poolid = @poolId AND miner = @address ORDER BY created DESC LIMIT 1";
         return con.ExecuteScalarAsync<DateTime?>(new CommandDefinition(query, new { poolId, address }, cancellationToken: ct));
+    }
+
+    public Task<int> GetPoolBlockCountSinceAsync(IDbConnection con, string poolId, DateTime since, CancellationToken ct)
+    {
+        const string query = @"SELECT COUNT(*) FROM blocks WHERE poolid = @poolId AND created >= @since";
+        return con.ExecuteScalarAsync<int>(new CommandDefinition(query, new { poolId, since }, cancellationToken: ct));
     }
 
     public async Task<Block> GetBlockByPoolHeightAndTypeAsync(IDbConnection con, string poolId, long height, string type)

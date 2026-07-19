@@ -421,6 +421,7 @@
     <ClCompile Include="shavite3.c" />
     <ClCompile Include="skein.c" />
     <ClCompile Include="skein2.c" />
+    <ClCompile Include="odocrypt.cpp" />
     <ClCompile Include="skydoge.c" />
     <ClCompile Include="Sponge.c" />
     <ClCompile Include="stdafx.cpp" />

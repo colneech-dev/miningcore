@@ -13,6 +13,7 @@ using Miningcore.Util;
 using NBitcoin;
 using NBitcoin.DataEncoders;
 using Newtonsoft.Json.Linq;
+using Miningcore.Blockchain.Bitcoin.AuxPoW;
 using Contract = Miningcore.Contracts.Contract;
 using NLog;
 using Transaction = NBitcoin.Transaction;
@@ -37,6 +38,9 @@ public class BitcoinJob
     protected IDestination poolAddressDestination;
     protected BitcoinTemplate coin;
     protected BitcoinPoolConfigExtra extraPoolConfig;
+    protected AuxBlockData[] auxBlocks;    // standard aux chain work for merge mining (multi-chain tree)
+    protected AuxBlockData rskAuxBlock;  // RSK standalone commitment (separate from aux tree)
+    protected AuxBlockData hathorAuxBlock;  // Hathor standalone commitment (separate from aux tree)
     private BitcoinTemplate.BitcoinNetworkParams networkParams;
     protected readonly ConcurrentDictionary<string, bool> submissions = new(StringComparer.OrdinalIgnoreCase);
     protected uint256 blockTargetValue;
@@ -60,8 +64,14 @@ public class BitcoinJob
     // serialization constants
     protected byte[] scriptSigFinalBytes;
 
+    // Aux chain merkle tree (built once per job from active aux blocks)
+    private byte[][] auxMerkleNodes;
+    private int auxMerkleTreeSize = 1;
+    private uint auxMerkleTreeNonce = 0;
+
     protected static byte[] sha256Empty = new byte[32];
     protected uint txVersion = 1u; // transaction version (currently 1) - see https://en.bitcoin.it/wiki/Transaction
+    private const double MinimumShareDifficultyRatio = 0.97d;
 
     protected static uint txInputCount = 1u;
     protected static uint txInPrevOutIndex = (uint) (Math.Pow(2, 32) - 1);
@@ -115,7 +125,7 @@ public class BitcoinJob
         string hexString = ByteArrayToHexString(txBytes);
 
         // Parse the transaction using NBitcoin
-        var transaction = Transaction.Parse(hexString, Network.Main);
+        var transaction = Transaction.Parse(hexString, network);
 
         return transaction.HasWitness;
     }
@@ -138,6 +148,23 @@ public class BitcoinJob
 
     protected virtual void BuildCoinbase()
     {
+        // Build aux chain merkle tree before GenerateScriptSigInitial so the
+        // commitment bytes are available when the script is assembled.
+        if(auxBlocks != null)
+        {
+            var activeAux = auxBlocks
+                .Where(a => a != null && !string.IsNullOrEmpty(a.Hash))
+                .ToList();
+
+            if(activeAux.Count > 0)
+            {
+                var (nodes, treeSize, nonce) = AuxPowSerializer.BuildAuxTree(activeAux);
+                auxMerkleNodes = nodes;
+                auxMerkleTreeSize = treeSize;
+                auxMerkleTreeNonce = nonce;
+            }
+        }
+
         // generate script parts
         var sigScriptInitial = GenerateScriptSigInitial();
         var sigScriptInitialBytes = sigScriptInitial.ToBytes();
@@ -250,8 +277,10 @@ public class BitcoinJob
                 if (coin.Symbol == "RVH" || coin.Symbol == "ANOK")
                 {
                     // Compute witness commitment
-                    raw = BlockTemplate.DefaultWitnessCommitment.HexToByteArray();
-                    byte[] witnessRoot = raw;
+                    // DefaultWitnessCommitment is a 38-byte script: OP_RETURN(1) + push36(1) + magic(4) + witnessRootHash(32)
+                    // Extract the 32-byte witness root hash starting at byte offset 6
+                    var commitmentScript = BlockTemplate.DefaultWitnessCommitment.HexToByteArray();
+                    byte[] witnessRoot = commitmentScript.Skip(6).Take(32).ToArray();
                     byte[] witnessNonce = new byte[32];
 
                     // Build Merkle Tree
@@ -318,6 +347,22 @@ public class BitcoinJob
         // push placeholder
         ops.Add(Op.GetPushOp(0));
 
+        // Embed the aux chain merkle tree commitment built in BuildCoinbase().
+        // Format: 0xfabe6d6d + merkleRoot(32) + treeSize(4LE) + nonce(4LE) = 44 bytes
+        // The root is stored internally in LE byte order (nodes[1]). The aux daemon
+        // (Namecoin auxpow.cpp::CAuxPow::check) reverses its locally-reconstructed root
+        // before searching the coinbase scriptSig, so we must embed the root in
+        // display/BE order (reversed from the internal tree representation).
+        if(auxMerkleNodes != null)
+        {
+            var rootDisplayOrder = auxMerkleNodes[1].Reverse().ToArray();
+            var commitment = AuxPowSerializer.BuildCoinbaseCommitment(rootDisplayOrder, auxMerkleTreeSize, auxMerkleTreeNonce);
+            ops.Add(Op.GetPushOp(commitment));
+        }
+
+        // RSK commitment is placed in a coinbase OP_RETURN output (see CreateOutputTransaction),
+        // not in the scriptSig, so it does not consume any of the coinbase scriptSig byte budget.
+
         return new Script(ops);
     }
 
@@ -371,6 +416,34 @@ public class BitcoinJob
         // Remaining amount goes to pool
         tx.Outputs.Add(rewardToPool, poolAddressDestination);
 
+        // RSK merge mining: append OP_RETURN output with RSKBLOCK: commitment.
+        // RSKj searches the full serialised coinbase transaction for this pattern,
+        // so placing it in an output keeps the coinbase scriptSig length unchanged
+        // and works on coins with strict 100-byte scriptSig limits (e.g. GateviaViacoin).
+        if(rskAuxBlock?.Hash != null)
+        {
+            var rskData = new byte[9 + 32]; // "RSKBLOCK:" (9) + hash (32)
+            Encoding.ASCII.GetBytes("RSKBLOCK:").CopyTo(rskData, 0);
+            // Hash is big-endian as returned by mnr_getWork and stored in AuxBlockData.Hash.
+            // RSKj searches the raw coinbase bytes for "RSKBLOCK:" followed by that same big-endian hash — no reversal.
+            rskAuxBlock.Hash.HexToByteArray().CopyTo(rskData, 9);
+            tx.Outputs.Add(Money.Zero, new Script(OpcodeType.OP_RETURN, Op.GetPushOp(rskData)));
+        }
+
+        // Hathor merge mining: append OP_RETURN output with "Hath" + mining base hash.
+        // Hathor requires the magic to IMMEDIATELY precede the hash and to not occur
+        // earlier in the serialized coinbase (verify_magic_number). Placing it in the
+        // LAST output keeps the maximum amount of coinbase bytes ahead of it, and an
+        // OP_RETURN output consumes no scriptSig budget (same rationale as RSK above).
+        if(hathorAuxBlock?.Hash != null)
+        {
+            var hathorData = new byte[4 + 32]; // "Hath" (4) + mining base hash (32)
+            Hathor.HathorSerializer.MagicNumber.CopyTo(hathorData, 0);
+            // Raw sha256d bytes as computed from the template — committed verbatim, no reversal.
+            hathorAuxBlock.Hash.HexToByteArray().CopyTo(hathorData, 4);
+            tx.Outputs.Add(Money.Zero, new Script(OpcodeType.OP_RETURN, Op.GetPushOp(hathorData)));
+        }
+
         return tx;
     }
 
@@ -387,16 +460,38 @@ public class BitcoinJob
         return reward;
     }
 
-    protected bool RegisterSubmit(string extraNonce1, string extraNonce2, string nTime, string nonce)
+    protected bool RegisterSubmit(string extraNonce1, string extraNonce2, string nTime, string nonce, string versionBits = null)
     {
         var key = new StringBuilder()
             .Append(extraNonce1)
-            .Append(extraNonce2) // lowercase as we don't want to accept case-sensitive values as valid.
+            .Append(extraNonce2)
             .Append(nTime)
-            .Append(nonce) // lowercase as we don't want to accept case-sensitive values as valid.
+            .Append(nonce)
+            .Append(versionBits ?? string.Empty)
             .ToString();
 
         return submissions.TryAdd(key, true);
+    }
+
+    private uint GetVersionRollingMask(uint? versionMask = null)
+    {
+        if(versionMask.HasValue)
+            return versionMask.Value;
+
+        if(extraPoolConfig?.VersionRollingMask != null)
+            return uint.Parse(extraPoolConfig.VersionRollingMask, NumberStyles.HexNumber);
+
+        return BitcoinConstants.VersionRollingPoolMask;
+    }
+
+    private uint GetBaseVersion(uint? versionMask = null)
+    {
+        var version = BlockTemplate.Version;
+
+        if(extraPoolConfig?.EnableVersionRolling != false)
+            version &= ~GetVersionRollingMask(versionMask);
+
+        return version;
     }
 
     protected byte[] SerializeHeader(Span<byte> coinbaseHash, uint nTime, uint nonce, uint? versionMask, uint? versionBits)
@@ -404,12 +499,16 @@ public class BitcoinJob
         // build merkle-root
         var merkleRoot = mt.WithFirst(coinbaseHash.ToArray());
 
-        // Build version
-        var version = BlockTemplate.Version;
+        // Build version from the stripped job version and apply miner-submitted rolling bits
+        // using masked-merge semantics. This keeps shares consistent with the job version sent
+        // to miners and avoids collisions when the rolling region overlaps an AsicBoost bit.
+        var version = GetBaseVersion(versionMask);
 
-        // Overt-ASIC boost
-        if(versionMask.HasValue && versionBits.HasValue)
-            version = (version & ~versionMask.Value) | (versionBits.Value & versionMask.Value);
+        if(versionBits.HasValue && versionBits.Value != 0)
+        {
+            var mask = versionMask ?? GetVersionRollingMask();
+            version = (version & ~mask) | (versionBits.Value & mask);
+        }
 
 #pragma warning disable 618
         var blockHeader = new BlockHeader
@@ -426,7 +525,15 @@ public class BitcoinJob
             return blockHeader.ToBytes();
     }
 
-    protected virtual (Share Share, string BlockHex) ProcessShareInternal(
+    private static bool IsShareDifficultyAcceptable(double shareDiff, double requiredDifficulty)
+    {
+        // Some miners and daemons can report work that is slightly under the pool's exact target
+        // due to client/daemon differences or timing. A small tolerance avoids false low-difficulty
+        // rejects while still keeping the pool strict enough to reject clearly weak shares.
+        return shareDiff >= requiredDifficulty * MinimumShareDifficultyRatio;
+    }
+
+    protected virtual (Share Share, string BlockHex, List<(AuxBlockData AuxBlock, byte[] HeaderBytes, byte[] Coinbase, List<byte[]> MerkleBranch)> AuxCandidates) ProcessShareInternal(
         StratumConnection worker, string extraNonce2, uint nTime, uint nonce, uint? versionBits)
     {
         var context = worker.ContextAs<BitcoinWorkerContext>();
@@ -453,14 +560,14 @@ public class BitcoinJob
         var isBlockCandidate = headerValue <= blockTargetValue;
 
         // test if share meets at least workers current difficulty
-        if(!isBlockCandidate && ratio < 0.99)
+        if(!isBlockCandidate && !IsShareDifficultyAcceptable(shareDiff, stratumDifficulty))
         {
             // check if share matched the previous difficulty from before a vardiff retarget
             if(context.VarDiff?.LastUpdate != null && context.PreviousDifficulty.HasValue)
             {
                 ratio = shareDiff / context.PreviousDifficulty.Value;
 
-                if(ratio < 0.99)
+                if(!IsShareDifficultyAcceptable(shareDiff, context.PreviousDifficulty.Value))
                     throw new StratumException(StratumError.LowDifficultyShare, $"low difficulty share ({shareDiff})");
 
                 // use previous difficulty
@@ -476,7 +583,39 @@ public class BitcoinJob
             BlockHeight = BlockTemplate.Height,
             NetworkDifficulty = Difficulty,
             Difficulty = stratumDifficulty / shareMultiplier,
+            HashDifficulty = shareDiff,
         };
+
+        // Check aux chain targets for merged mining
+        List<(AuxBlockData AuxBlock, byte[] HeaderBytes, byte[] Coinbase, List<byte[]> MerkleBranch)> auxCandidates = null;
+        if(auxBlocks != null)
+        {
+            foreach(var aux in auxBlocks)
+            {
+                if(aux?.TargetValue != null && headerValue <= aux.TargetValue)
+                {
+                    auxCandidates ??= new();
+                    auxCandidates.Add((aux, headerBytes.ToArray(), coinbase, MerkleBranchSteps));
+                    logger.Info(() => "[" + worker.ConnectionId + "] Merged mining candidate: meets aux target for " + (aux.Hash.Length > 16 ? aux.Hash[..16] : aux.Hash) + "...");
+                }
+            }
+        }
+
+        // Check RSK target (standalone coinbase commitment, separate from aux tree)
+        if(rskAuxBlock?.TargetValue != null && headerValue <= rskAuxBlock.TargetValue)
+        {
+            auxCandidates ??= new();
+            auxCandidates.Add((rskAuxBlock, headerBytes.ToArray(), coinbase, MerkleBranchSteps));
+            logger.Info(() => $"[{worker.ConnectionId}] RSK merged mining candidate: hash={rskAuxBlock.Hash[..Math.Min(16, rskAuxBlock.Hash.Length)]}...");
+        }
+
+        // Check Hathor target (standalone coinbase commitment, separate from aux tree)
+        if(hathorAuxBlock?.TargetValue != null && headerValue <= hathorAuxBlock.TargetValue)
+        {
+            auxCandidates ??= new();
+            auxCandidates.Add((hathorAuxBlock, headerBytes.ToArray(), coinbase, MerkleBranchSteps));
+            logger.Info(() => $"[{worker.ConnectionId}] Hathor merged mining candidate: baseHash={hathorAuxBlock.Hash[..Math.Min(16, hathorAuxBlock.Hash.Length)]}...");
+        }
 
         if(isBlockCandidate)
         {
@@ -489,10 +628,10 @@ public class BitcoinJob
             var blockBytes = SerializeBlock(headerBytes, coinbase);
             var blockHex = blockBytes.ToHexString();
 
-            return (result, blockHex);
+            return (result, blockHex, auxCandidates);
         }
 
-        return (result, null);
+        return (result, null, auxCandidates);
     }
 
     protected virtual byte[] SerializeCoinbase(string extraNonce1, string extraNonce2)
@@ -660,28 +799,44 @@ public class BitcoinJob
 
     protected virtual Money CreateFounderOutputs(Transaction tx, Money reward)
     {
-        if (founderParameters.Founder != null)
+        if(founderParameters == null)
+            return reward;
+
+        var founderOutputAdded = false;
+
+        if(founderParameters.Founder != null && founderParameters.Founder.Type != JTokenType.Null)
         {
             Founder[] founders;
-            if (founderParameters.Founder.Type == JTokenType.Array)
+            if(founderParameters.Founder.Type == JTokenType.Array)
                 founders = founderParameters.Founder.ToObject<Founder[]>();
             else
                 founders = new[] { founderParameters.Founder.ToObject<Founder>() };
 
             if(founders != null)
             {
-                foreach(var Founder in founders)
+                foreach(var founder in founders)
                 {
-                    if(!string.IsNullOrEmpty(Founder.Payee))
+                    if(founder != null && !string.IsNullOrEmpty(founder.Payee))
                     {
-                        var payeeAddress = BitcoinUtils.AddressToDestination(Founder.Payee, network);
-                        var payeeReward = Founder.Amount;
+                        var payeeAddress = BitcoinUtils.AddressToDestination(founder.Payee, network);
+                        var payeeReward = founder.Amount;
 
                         tx.Outputs.Add(payeeReward, payeeAddress);
                         reward -= payeeReward;
+                        founderOutputAdded = true;
                     }
                 }
             }
+        }
+
+        // Separate check so FounderReward is used even when Founder was present but empty (fxtc-style)
+        if(!founderOutputAdded && founderParameters.FounderReward != null && !string.IsNullOrEmpty(founderParameters.FounderReward.Founderpayee))
+        {
+            var payeeAddress = BitcoinUtils.AddressToDestination(founderParameters.FounderReward.Founderpayee, network);
+            var payeeReward = founderParameters.FounderReward.Amount;
+
+            tx.Outputs.Add(payeeReward, payeeAddress);
+            reward -= payeeReward;
         }
 
         return reward;
@@ -736,9 +891,8 @@ public class BitcoinJob
         {
             var payeeAddress = BitcoinUtils.AddressToDestination(minerFundParameters.Addresses[0], network);
             tx.Outputs.Add(payeeReward, payeeAddress);
+            reward -= payeeReward;
         }
-
-        reward -= payeeReward;
 
         return reward;
     }
@@ -751,9 +905,10 @@ public class BitcoinJob
     {
         if(BlockTemplate.CommunityAutonomousValue > 0)
         {
-            var payeeReward = BlockTemplate.CommunityAutonomousValue;
+            var payeeReward = new Money(BlockTemplate.CommunityAutonomousValue, MoneyUnit.Satoshi);
             var payeeAddress = BitcoinUtils.AddressToDestination(BlockTemplate.CommunityAutonomousAddress, network);
             tx.Outputs.Add(payeeReward, payeeAddress);
+            reward -= payeeReward;
         }
         return reward;
     }
@@ -777,6 +932,7 @@ public class BitcoinJob
                     Script payeeAddress = new Script(CBReward.ScriptPubkey.HexToByteArray());
                     var payeeReward = CBReward.Value;
                     tx.Outputs.Add(payeeReward, payeeAddress);
+                    reward -= payeeReward;
                 }
             }
         }
@@ -862,7 +1018,7 @@ public class BitcoinJob
                         var payeeReward = DataMining.Amount;
 
                         tx.Outputs.Add(payeeReward, payeeAddress);
-                        //reward -= payeeReward;
+                        reward -= payeeReward;
                     }
                 }
             }
@@ -961,15 +1117,25 @@ public class BitcoinJob
 
     public BlockTemplate BlockTemplate { get; protected set; }
     public double Difficulty { get; protected set; }
-
     public string JobId { get; protected set; }
+
+    public List<byte[]> MerkleBranchSteps => mt?.Steps?.ToList() ?? new List<byte[]>();
+    public AuxBlockData[] AuxBlocks => auxBlocks;
+    public AuxBlockData RskAuxBlock => rskAuxBlock;
+    public AuxBlockData HathorAuxBlock => hathorAuxBlock;
+    public byte[][] AuxMerkleNodes => auxMerkleNodes;
+    public int AuxMerkleTreeSize => auxMerkleTreeSize;
+    public uint AuxMerkleTreeNonce => auxMerkleTreeNonce;
 
     public void Init(BlockTemplate blockTemplate, string jobId,
         PoolConfig pc, BitcoinPoolConfigExtra extraPoolConfig,
         ClusterConfig cc, IMasterClock clock,
         IDestination poolAddressDestination, Network network,
         bool isPoS, double shareMultiplier, IHashAlgorithm coinbaseHasher,
-        IHashAlgorithm headerHasher, IHashAlgorithm blockHasher)
+        IHashAlgorithm headerHasher, IHashAlgorithm blockHasher,
+        AuxBlockData[] auxBlocks = null,
+        AuxBlockData rskAuxBlock = null,
+        AuxBlockData hathorAuxBlock = null)
     {
         Contract.RequiresNonNull(blockTemplate);
         Contract.RequiresNonNull(pc);
@@ -983,6 +1149,9 @@ public class BitcoinJob
 
         coin = pc.Template.As<BitcoinTemplate>();
         this.extraPoolConfig = extraPoolConfig;
+        this.auxBlocks = auxBlocks;
+        this.rskAuxBlock = rskAuxBlock;
+        this.hathorAuxBlock = hathorAuxBlock;
         networkParams = coin.GetNetwork(network.ChainName);
         txVersion = coin.CoinbaseTxVersion;
         this.network = network;
@@ -1029,7 +1198,26 @@ public class BitcoinJob
             payeeParameters = BlockTemplate.Extra.SafeExtensionDataAs<PayeeBlockTemplateExtra>();
 
         if(coin.HasFounderFee)
+        {
             founderParameters = BlockTemplate.Extra.SafeExtensionDataAs<FounderBlockTemplateExtra>();
+
+            // Direct extraction fallback: SafeExtensionDataAs silently swallows all exceptions.
+            // If it returned null or left FounderReward empty, pull directly from the raw Extra dict.
+            if(founderParameters?.FounderReward == null &&
+               BlockTemplate.Extra != null &&
+               BlockTemplate.Extra.TryGetValue("founderreward", out var frToken) &&
+               frToken is JToken frJToken && frJToken.Type != JTokenType.Null)
+            {
+                founderParameters ??= new FounderBlockTemplateExtra();
+                founderParameters.FounderReward = frJToken.ToObject<FounderRewardEntry>();
+            }
+
+            logger.Info(() => $"HasFounderFee: founderParameters={founderParameters != null}, " +
+                $"Founder={founderParameters?.Founder?.Type}, " +
+                $"FounderReward={founderParameters?.FounderReward != null}, " +
+                $"Payee={founderParameters?.FounderReward?.Founderpayee}, " +
+                $"Amount={founderParameters?.FounderReward?.Amount}");
+        }
 
         if(coin.HasFundReward)
             fundRewardParameters = BlockTemplate.Extra.SafeExtensionDataAs<FundRewardBlockTemplateExtra>();
@@ -1062,13 +1250,10 @@ public class BitcoinJob
         this.headerHasher = headerHasher;
         this.blockHasher = blockHasher;
 
-        if(!string.IsNullOrEmpty(BlockTemplate.Target))
-            blockTargetValue = new uint256(BlockTemplate.Target);
-        else
-        {
-            var tmp = new Target(BlockTemplate.Bits.HexToByteArray());
-            blockTargetValue = tmp.ToUInt256();
-        }
+        // Always use Bits field for target calculation - some nodes (like DGB v9) return Target in wrong byte order
+        // Bits is the standard compact target format that's guaranteed to be correct
+        var tmp = new Target(BlockTemplate.Bits.HexToByteArray());
+        blockTargetValue = tmp.ToUInt256();
 
         previousBlockHashReversedHex = BlockTemplate.PreviousBlockhash
             .HexToByteArray()
@@ -1078,6 +1263,8 @@ public class BitcoinJob
         BuildMerkleBranches();
         BuildCoinbase();
 
+        var jobVersion = GetBaseVersion();
+
         jobParams = new object[]
         {
             JobId,
@@ -1085,7 +1272,7 @@ public class BitcoinJob
             coinbaseInitialHex,
             coinbaseFinalHex,
             merkleBranchesHex,
-            BlockTemplate.Version.ToStringHex8(),
+            jobVersion.ToStringHex8(),
             BlockTemplate.Bits,
             BlockTemplate.CurTime.ToStringHex8(),
             false
@@ -1122,23 +1309,24 @@ public class BitcoinJob
 
         var nonceInt = uint.Parse(nonce, NumberStyles.HexNumber);
 
-        // validate version-bits (overt ASIC boost)
+        // validate version-bits (overt ASIC boost or firmware-applied rolling without negotiation)
         uint versionBitsInt = 0;
 
-        if(context.VersionRollingMask.HasValue && versionBits != null)
+        if(versionBits != null)
         {
             versionBitsInt = uint.Parse(versionBits, NumberStyles.HexNumber);
 
-            // enforce that only bits covered by current mask are changed by miner
-            if((versionBitsInt & ~context.VersionRollingMask.Value) != 0)
+            // Only enforce mask constraint when version rolling was formally negotiated
+            if(context.VersionRollingMask.HasValue && (versionBitsInt & ~context.VersionRollingMask.Value) != 0)
                 throw new StratumException(StratumError.Other, "rolling-version mask violation");
         }
 
-        // dupe check
-        if(!RegisterSubmit(context.ExtraNonce1, extraNonce2, nTime, nonce))
+        // dupe check — include versionBits so AsicBoost miners can submit same nonce with different version bits
+        if(!RegisterSubmit(context.ExtraNonce1, extraNonce2, nTime, nonce, versionBits))
             throw new StratumException(StratumError.DuplicateShare, "duplicate share");
 
-        var (share, blockHex) = ProcessShareInternal(worker, extraNonce2, nTimeInt, nonceInt, versionBitsInt);
+        var (share, blockHex, auxCandidates) = ProcessShareInternal(worker, extraNonce2, nTimeInt, nonceInt, versionBitsInt);
+        share.AuxCandidates = auxCandidates;
 
         // If the coin reserves nVersion bits for PoW type selection (e.g. LCC bit 16),
         // suppress block submission when those bits are set in the miner-submitted nVersion.

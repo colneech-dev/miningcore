@@ -114,7 +114,11 @@ public class StatsRecorder : BackgroundService
 
             var byMiner = result.GroupBy(x => x.Miner).ToArray();
 
-            if (result.Length > 0)
+            // Force reset if no shares for 600+ seconds (inactivity timeout)
+            var inactivityTimeout = TimeSpan.FromSeconds(600);
+            var hasRecentShares = result.Length > 0 && (now - result.Max(x => x.LastShare)) < inactivityTimeout;
+
+            if (hasRecentShares)
             {
                 // pool miners
                 pool.PoolStats.ConnectedMiners = byMiner.Length; // update connected miners
@@ -155,6 +159,19 @@ public class StatsRecorder : BackgroundService
                 messageBus.NotifyHashrateUpdated(pool.Config.Id, 0);
 
                 logger.Info(() => $"[{poolId}] Reset performance stats for pool");
+            }
+
+            // reset on inactivity timeout
+            if (!hasRecentShares && result.Length > 0)
+            {
+                pool.PoolStats.ConnectedMiners = 0;
+                pool.PoolStats.ConnectedWorkers = 0;
+                pool.PoolStats.PoolHashrate = 0;
+                pool.PoolStats.SharesPerSecond = 0;
+
+                messageBus.NotifyHashrateUpdated(pool.Config.Id, 0);
+
+                logger.Info(() => $"[{poolId}] Reset performance stats for pool (inactivity timeout)");
             }
 
             // persist
@@ -218,10 +235,10 @@ public class StatsRecorder : BackgroundService
                             minerHashTimeFrame = Math.Floor(hashrateCalculationWindow.TotalSeconds - timeFrameBeforeFirstShare );
 
                         if(timeFrameAfterLastShare   >= (hashrateCalculationWindow.TotalSeconds * 0.1) )
-                            minerHashTimeFrame = Math.Floor(hashrateCalculationWindow.TotalSeconds + timeFrameAfterLastShare   );
+                            minerHashTimeFrame = Math.Floor(hashrateCalculationWindow.TotalSeconds - timeFrameAfterLastShare   );
 
                         if( (timeFrameBeforeFirstShare >= (hashrateCalculationWindow.TotalSeconds * 0.1)) && (timeFrameAfterLastShare >= (hashrateCalculationWindow.TotalSeconds * 0.1)) )
-                            minerHashTimeFrame = (hashrateCalculationWindow.TotalSeconds - timeFrameBeforeFirstShare + timeFrameAfterLastShare);
+                            minerHashTimeFrame = (hashrateCalculationWindow.TotalSeconds - timeFrameBeforeFirstShare - timeFrameAfterLastShare);
 
                         if(minerHashTimeFrame < 1)
                             minerHashTimeFrame = 1;
@@ -265,7 +282,7 @@ public class StatsRecorder : BackgroundService
 
                     foreach(var item in orphanedHashrateForMinerWorker)
                     {
-                        var parts = item.Split(keySeparator);
+                        var parts = item.Split(keySeparator, 2);
                         var miner = parts[0];
                         var worker = parts.Length > 1 ? parts[1] : null;
 

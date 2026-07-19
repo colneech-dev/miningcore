@@ -321,6 +321,14 @@ public partial class BitcoinTemplate : CoinTemplate
     /// </summary>
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
     public int? PayoutDecimalPlaces { get; set; } = 4;
+
+    /// <summary>
+    /// Target block time in seconds. When set, overrides the daemon-reported network hashrate
+    /// with a value derived from difficulty and this target, correcting coins whose daemons
+    /// report inflated values via getnetworkhashps.
+    /// </summary>
+    [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+    public double? TargetBlockTime { get; set; }
 }
 
 public enum ConcealSubfamily
@@ -1233,6 +1241,12 @@ public partial class ApiConfig
     /// If this list null or empty, the default is 127.0.0.1
     /// </summary>
     public string[] AdminIpWhitelist { get; set; }
+
+    /// <summary>
+    /// Optional bearer token required for all /api/admin requests.
+    /// If null or empty, token checking is disabled (IP whitelist only).
+    /// </summary>
+    public string AdminToken { get; set; }
 
     /// <summary>
     /// Restricts access to the /metrics endpoint to these IP addresses

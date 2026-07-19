@@ -222,6 +222,26 @@ public class Program : BackgroundService
                         {
                             "/api/admin"
                         }, clusterConfig.Api?.AdminIpWhitelist);
+
+                        var adminToken = clusterConfig.Api?.AdminToken;
+                        if(!string.IsNullOrEmpty(adminToken))
+                        {
+                            app.Use(async (context, next) =>
+                            {
+                                if(context.Request.Path.StartsWithSegments("/api/admin"))
+                                {
+                                    var auth = context.Request.Headers["Authorization"].ToString();
+                                    var expected = $"Bearer {adminToken}";
+                                    if(!string.Equals(auth, expected, StringComparison.Ordinal))
+                                    {
+                                        context.Response.StatusCode = 401;
+                                        await context.Response.WriteAsync("Unauthorized");
+                                        return;
+                                    }
+                                }
+                                await next();
+                            });
+                        }
                         UseIpWhiteList(app, true, new[]
                         {
                             "/metrics"
@@ -648,6 +668,12 @@ public class Program : BackgroundService
         Console.WriteLine();
     }
 
+    private static bool IsRunningInContainer()
+    {
+        return Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") == "true" ||
+               File.Exists("/.dockerenv");
+    }
+
     private static void ConfigureLogging()
     {
         var config = clusterConfig.Logging;
@@ -686,7 +712,9 @@ public class Program : BackgroundService
                 loggingConfig.AddRule(level, NLog.LogLevel.Fatal, target, "Microsoft.AspNetCore.*", true);
             }
 
-            if(config.EnableConsoleLog || isShareRecoveryMode)
+            var enableConsoleLog = config.EnableConsoleLog || isShareRecoveryMode || IsRunningInContainer();
+
+            if(enableConsoleLog)
             {
                 if(config.EnableConsoleColors)
                 {

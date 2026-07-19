@@ -62,4 +62,25 @@ public class BitcoinPoolConfigExtra
     /// Use for coins that encode PoW type in nVersion (e.g. LCC uses bit 16: 00010000).
     /// </summary>
     public string VersionBlockedBits { get; set; }
+
+    /// <summary>
+    /// Optional list of auxiliary chains to merge-mine alongside this pool.
+    /// Each entry specifies a chain daemon (e.g. Namecoin) whose blocks will
+    /// be committed in this pool's coinbase and submitted when difficulty is met.
+    /// </summary>
+    public AuxPoW.AuxChainConfig[] AuxChains { get; set; }
+
+    /// <summary>
+    /// Optional RSK (Rootstock) merge mining configuration.
+    /// RSK uses a different RPC protocol (mnr_getWork / mnr_submitBitcoinBlock)
+    /// but shares the same AuxPoW Merkle tree in the coinbase.
+    /// </summary>
+    public RSK.RskChainConfig RskChain { get; set; }
+
+    /// <summary>
+    /// Optional Hathor (HTR) merge mining configuration.
+    /// Hathor uses its own protocol (RFC 0006): a "Hath"+hash coinbase commitment and
+    /// funds||graph||aux_pow submission via the node HTTP API — no aux Merkle tree slot.
+    /// </summary>
+    public Hathor.HathorChainConfig HathorChain { get; set; }
 }

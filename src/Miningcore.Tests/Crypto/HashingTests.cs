@@ -94,6 +94,37 @@ public class HashingTests : TestBase
     }
 
     [Fact]
+    public void Odocrypt_Hash()
+    {
+        var hasher = new Odocrypt();
+        var hash = new byte[32];
+        hasher.Digest(testValue2, hash, 0ul);
+        var result = hash.ToHexString();
+
+        Assert.Equal("a7a694a0464fad7d34b5ef3cd28a1caffd8410069e091195fb196f28b298f6dc", result);
+    }
+
+    [Fact]
+    public void Odocrypt_EpochBoundary()
+    {
+        var hasher = new Odocrypt();
+        var hashA = new byte[32]; var hashB = new byte[32]; var hashC = new byte[32];
+        hasher.Digest(testValue2, hashA, 863999ul);  // epoch 0
+        hasher.Digest(testValue2, hashB, 864000ul);  // epoch 1 — different key
+        hasher.Digest(testValue2, hashC, 100000ul);  // epoch 0 — same key as A
+        Assert.NotEqual(hashA.ToHexString(), hashB.ToHexString());
+        Assert.Equal(hashA.ToHexString(), hashC.ToHexString());
+    }
+
+    [Fact]
+    public void Odocrypt_RequiresNTime()
+    {
+        var hasher = new Odocrypt();
+        var hash = new byte[32];
+        Assert.ThrowsAny<Exception>(() => hasher.Digest(testValue2, hash));
+    }
+
+    [Fact]
     public void Scrypt_Hash()
     {
         var hasher = new Scrypt(1024, 1);

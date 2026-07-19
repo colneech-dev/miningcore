@@ -320,6 +320,34 @@
         "explorerTxLink": "http://explorer.kriptokyng.com:3001/tx/{0}",
         "explorerAccountLink": "http://explorer.kriptokyng.com:3001/address/{0}"
     },
+    "argentum": {
+        "name": "Argentum",
+        "canonicalName": "Argentum",
+        "symbol": "ARG",
+        "family": "bitcoin",
+        "website": "",
+        "market": "",
+        "twitter": "",
+        "telegram": "",
+        "discord": "",
+        "coinbaseHasher": {
+            "hash": "sha256d"
+        },
+        "headerHasher": {
+            "hash": "sha256d"
+        },
+        "blockHasher": {
+            "hash": "reverse",
+            "args": [
+                {
+                    "hash": "sha256d"
+                }
+            ]
+        },
+        "explorerBlockLink": "https://chainz.cryptoid.info/arg/block.dws?$height$.htm",
+        "explorerTxLink": "https://chainz.cryptoid.info/arg/tx.dws?{0}.htm",
+        "explorerAccountLink": "https://chainz.cryptoid.info/arg/address.dws?{0}.htm"
+    },
     "bitcoin": {
         "name": "Bitcoin",
         "canonicalName": "Bitcoin",
@@ -460,6 +488,29 @@
         "explorerBlockLink": "https://explorer.btcnickel.com/block/$hash$",
         "explorerTxLink": "https://explorer.btcnickel.com/tx/{0}",
         "explorerAccountLink": "https://explorer.btcnickel.com/address/{0}"
+    },
+    "bitcoin-ii": {
+        "name": "Bitcoin II",
+        "canonicalName": "Bitcoin II",
+        "symbol": "BC2",
+        "family": "bitcoin",
+        "website": "https://github.com/Bitcoin-II/BitcoinII-Core",
+        "market": "https://coinmarketcap.com/currencies/bitcoin-2/",
+        "coinbaseHasher": {
+            "hash": "sha256d"
+        },
+        "headerHasher": {
+            "hash": "sha256d"
+        },
+        "blockHasher": {
+            "hash": "reverse",
+            "args": [
+                {
+                    "hash": "sha256d"
+                }
+            ]
+        },
+        "coinbaseMinConfimations": 100
     },
     "bitcore": {
         "name": "Bitcore",
@@ -772,6 +823,34 @@
         "explorerTxLink": "https://explorer.danecoin.org/tx/{0}",
         "explorerAccountLink": "https://explorer.danecoin.org/address/{0}"
     },
+    "doichain": {
+        "name": "DoiChain",
+        "canonicalName": "Doichain",
+        "symbol": "DOI",
+        "family": "bitcoin",
+        "website": "",
+        "market": "",
+        "twitter": "",
+        "telegram": "",
+        "discord": "",
+        "coinbaseHasher": {
+            "hash": "sha256d"
+        },
+        "headerHasher": {
+            "hash": "sha256d"
+        },
+        "blockHasher": {
+            "hash": "reverse",
+            "args": [
+                {
+                    "hash": "sha256d"
+                }
+            ]
+        },
+        "explorerBlockLink": "https://explorer.doichain.org/block/$hash$",
+        "explorerTxLink": "https://explorer.doichain.org/tx/{0}",
+        "explorerAccountLink": "https://explorer.doichain.org/address/{0}"
+    },
     "dash": {
         "name": "Dash",
         "canonicalName": "Dash",
@@ -957,6 +1036,38 @@
         "shareMultiplier": 256,
         "blockTemplateRpcExtraParams": [
             "groestl"
+        ],
+        "explorerBlockLink": "https://chainz.cryptoid.info/dgb/block.dws?$height$.htm",
+        "explorerTxLink": "https://chainz.cryptoid.info/dgb/tx.dws?{0}.htm",
+        "explorerAccountLink": "https://chainz.cryptoid.info/dgb/address.dws?{0}.htm"
+    },
+    "digibyte-odocrypt": {
+        "name": "Digibyte Odocrypt",
+        "canonicalName": "Digibyte",
+        "symbol": "DGB",
+        "family": "bitcoin",
+        "website": "https://digibyte.org/",
+        "market": "https://coinmarketcap.com/currencies/digibyte/",
+        "twitter": "https://x.com/digibytecoin",
+        "telegram": "https://t.me/DigiByteCoin",
+        "discord": "",
+        "coinbaseHasher": {
+            "hash": "sha256d"
+        },
+        "headerHasher": {
+            "hash": "odocrypt"
+        },
+        "blockHasher": {
+            "hash": "reverse",
+            "args": [
+                {
+                    "hash": "sha256d"
+                }
+            ]
+        },
+        "shareMultiplier": 1,
+        "blockTemplateRpcExtraParams": [
+            "odo"
         ],
         "explorerBlockLink": "https://chainz.cryptoid.info/dgb/block.dws?$height$.htm",
         "explorerTxLink": "https://chainz.cryptoid.info/dgb/tx.dws?{0}.htm",
@@ -4661,9 +4772,39 @@
             ]
         },
         "shareMultiplier": 65536,
-        "explorerBlockLink": "https://chainz.cryptoid.info/via/block.dws?$height$.htm",
-        "explorerTxLink": "https://chainz.cryptoid.info/via/tx.dws?{0}.htm",
-        "explorerAccountLink": "https://chainz.cryptoid.info/via/address.dws?{0}.htm"
+        "explorerBlockLink": "https://explorer.viacoin.org/block/$hash$",
+        "explorerTxLink": "https://explorer.viacoin.org/tx/{0}",
+        "explorerAccountLink": "https://explorer.viacoin.org/address/{0}"
+    },
+    "bells": {
+        "name": "Bellscoin",
+        "canonicalName": "Bellscoin",
+        "symbol": "BELLS",
+        "family": "bitcoin",
+        "website": "https://bellscoin.com/",
+        "coinbaseHasher": { "hash": "sha256d" },
+        "headerHasher": { "hash": "scrypt", "args": [1024, 1] },
+        "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
+        "shareMultiplier": 65536,
+        "coinbaseMinConfimations": 251,
+        "explorerBlockLink": "https://bellsscan.io/block/$hash$",
+        "explorerTxLink": "https://bellsscan.io/tx/{0}",
+        "explorerAccountLink": "https://bellsscan.io/address/{0}"
+    },
+    "pepecoin": {
+        "name": "Pepecoin",
+        "canonicalName": "Pepecoin",
+        "symbol": "PEP",
+        "family": "bitcoin",
+        "website": "https://pepecoin.org/",
+        "coinbaseHasher": { "hash": "sha256d" },
+        "headerHasher": { "hash": "scrypt", "args": [1024, 1] },
+        "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
+        "shareMultiplier": 65536,
+        "coinbaseMinConfimations": 251,
+        "explorerBlockLink": "https://pepeplorer.com/block/$hash$",
+        "explorerTxLink": "https://pepeplorer.com/tx/{0}",
+        "explorerAccountLink": "https://pepeplorer.com/address/{0}"
     },
     "vkax": {
         "name": "Vkax",
@@ -6171,8 +6312,8 @@
         "subAddressPrefix": 23578,
         "subAddressPrefixTestnet": 22560,
         "subAddressPrefixStagenet": 2859546,
-        "explorerBlockLink": "https://explorer.scalaproject.io/block/$hash$",
-        "explorerTxLink": "https://explorer.scalaproject.io/tx/{0}"
+        "explorerBlockLink": "https://explorer.scala.network/block/$hash$",
+        "explorerTxLink": "https://explorer.scala.network/tx/{0}"
     },
     "zephyr": {
         "name": "Zephyr",
@@ -6789,5 +6930,179 @@
         "explorerBlockLink": "https://explorer.cryptix-network.org/blocks/$hash$",
         "explorerTxLink": "https://explorer.cryptix-network.org/txs/{0}",
         "explorerAccountLink": "https://explorer.cryptix-network.org/addresses/{0}"
+    },
+    "fxtc": {
+        "name": "FxTC",
+        "canonicalName": "Fixed Trade Coin",
+        "symbol": "FXTC",
+        "family": "bitcoin",
+        "website": "https://fixedtradecoin.org/",
+        "coinbaseHasher": { "hash": "sha256d" },
+        "headerHasher": { "hash": "sha256d" },
+        "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
+        "hasFounderFee": true,
+        "coinbaseMinConfimations": 100,
+        "explorerBlockLink": "https://www.blockseek.io/fxtc/block/{0}",
+        "explorerTxLink": "https://www.blockseek.io/fxtc/tx/{0}",
+        "explorerAccountLink": "https://www.blockseek.io/fxtc/address/{0}"
+    },
+    "mydoge": {
+        "name": "Mydogecoin",
+        "canonicalName": "MYDOGECOIN (MYDOGE)",
+        "symbol": "MYDOGE",
+        "family": "bitcoin",
+        "website": "https://mydogecoin.fun/",
+        "coinbaseHasher": { "hash": "sha256d" },
+        "headerHasher": { "hash": "scrypt", "args": [1024, 1] },
+        "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
+        "shareMultiplier": 65536,
+        "coinbaseMinConfimations": 251,
+        "explorerBlockLink": "https://explorer.mydogecoin.fun/",
+        "explorerTxLink": "https://explorer.mydogecoin.fun/",
+        "explorerAccountLink": "https://explorer.mydogecoin.fun/"
+    },
+    "ordex": {
+        "name": "OrdexCoin",
+        "canonicalName": "OrdexCoin",
+        "symbol": "OXC",
+        "family": "bitcoin",
+        "website": "https://www.ordexcoin.com/",
+        "coinbaseHasher": { "hash": "sha256d" },
+        "headerHasher": { "hash": "sha256d" },
+        "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
+        "explorerBlockLink": "https://explorer.ordexcoin.com/block/{0}",
+        "explorerTxLink": "https://explorer.ordexcoin.com/tx/{0}",
+        "explorerAccountLink": "https://explorer.ordexcoin.com/address/{0}"
+    },
+    "palladium": {
+        "name": "Palladium",
+        "symbol": "PLM",
+        "family": "bitcoin",
+        "website": "https://palladium-coin.xyz",
+        "coinbaseHasher": { "hash": "sha256d" },
+        "headerHasher": { "hash": "sha256d" },
+        "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
+        "addressPrefix": { "pubkeyHash": 55, "scriptHash": 8 },
+        "bech32Prefix": "plm",
+        "coinbaseMinConfimations": 100,
+        "explorerBlockLink": "https://explorer.palladium-coin.xyz/block/{0}",
+        "explorerTxLink": "https://explorer.palladium-coin.xyz/tx/{0}",
+        "explorerAccountLink": "https://explorer.palladium-coin.xyz/address/{0}"
+    },
+    "bitcoinsilver": {
+        "name": "Bitcoin Silver",
+        "canonicalName": "Bitcoin Silver",
+        "symbol": "BTCS",
+        "family": "bitcoin",
+        "website": "https://bitcoinsilver.top/",
+        "coinbaseHasher": { "hash": "sha256d" },
+        "headerHasher": { "hash": "sha256d" },
+        "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
+        "coinbaseMinConfimations": 200,
+        "targetBlockTime": 300,
+        "explorerBlockLink": "https://explorer.bitcoinsilver.top/block/$hash$",
+        "explorerTxLink": "https://explorer.bitcoinsilver.top/tx/{0}",
+        "explorerAccountLink": "https://explorer.bitcoinsilver.top/address/{0}"
+    },
+    "wojakcoin": {
+        "name": "WojakCoin",
+        "canonicalName": "WojakCoin",
+        "symbol": "WJK",
+        "family": "bitcoin",
+        "website": "https://wojakcoin.cash/",
+        "coinbaseHasher": { "hash": "sha256d" },
+        "headerHasher": { "hash": "sha256d" },
+        "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
+        "explorerBlockLink": "https://explorer.wojakcoin2017.xyz/block/$",
+        "explorerTxLink": "https://explorer.wojakcoin2017.xyz/tx/{0}",
+        "explorerAccountLink": "https://explorer.wojakcoin2017.xyz/address/{0}"
+    },
+    "litecoin-ii": {
+        "name": "Litecoin II",
+        "canonicalName": "Litecoin-II",
+        "symbol": "LC2",
+        "family": "bitcoin",
+        "website": "https://litecoinii.org/",
+        "market": "https://miningpoolstats.stream/litecoin2",
+        "twitter": "",
+        "telegram": "",
+        "discord": "",
+        "coinbaseHasher": { "hash": "sha256d" },
+        "headerHasher": { "hash": "scrypt", "args": [1024, 1] },
+        "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
+        "hasMWEB": true,
+        "shareMultiplier": 65536,
+        "coinbaseMinConfimations": 251,
+        "explorerBlockLink": "https://explorer.litecoinii.org/block/$",
+        "explorerTxLink": "https://explorer.litecoinii.org/tx/{0}",
+        "explorerAccountLink": "https://explorer.litecoinii.org/address/{0}"
+    },
+    "fractal": {
+        "name": "Fractal Bitcoin",
+        "canonicalName": "Fractal",
+        "symbol": "FB",
+        "family": "bitcoin",
+        "website": "https://fractalbitcoin.org/",
+        "market": "https://coinmarketcap.com/currencies/fractal-bitcoin/",
+        "twitter": "https://x.com/fractalgaming",
+        "telegram": "",
+        "discord": "",
+        "coinbaseHasher": { "hash": "sha256d" },
+        "headerHasher": { "hash": "sha256d" },
+        "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
+        "shareMultiplier": 1,
+        "coinbaseMinConfimations": 101,
+        "targetBlockTime": 15,
+        "explorerBlockLink": "https://explorer.fractalbitcoin.org/block/$",
+        "explorerTxLink": "https://explorer.fractalbitcoin.org/tx/{0}",
+        "explorerAccountLink": "https://explorer.fractalbitcoin.org/address/{0}"
+    },
+    "gateviacoin": {
+        "name": "GateviaCoin",
+        "canonicalName": "GateviaCoin",
+        "symbol": "GVIA",
+        "family": "bitcoin",
+        "website": "https://github.com/gateviaofficial/gateviacoin",
+        "coinbaseHasher": { "hash": "sha256d" },
+        "headerHasher": { "hash": "sha256d" },
+        "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
+        "shareMultiplier": 1,
+        "coinbaseMinConfimations": 101,
+        "targetBlockTime": 120,
+        "explorerBlockLink": "https://explorer.gatevia.io/block/$hash$",
+        "explorerTxLink": "https://explorer.gatevia.io/tx/{0}",
+        "explorerAccountLink": "https://explorer.gatevia.io/address/{0}"
+    },
+    "btgs": {
+        "name": "BTGS",
+        "canonicalName": "BTGS",
+        "symbol": "BTGS",
+        "family": "bitcoin",
+        "website": "https://github.com/BTGSCOINDEV/BTGS",
+        "coinbaseHasher": { "hash": "sha256d" },
+        "headerHasher": { "hash": "sha256d" },
+        "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
+        "shareMultiplier": 1,
+        "coinbaseMinConfimations": 101,
+        "explorerBlockLink": "https://explore.bitcoingold.site/block-height/$height$",
+        "explorerTxLink": "https://explore.bitcoingold.site/tx/{0}",
+        "explorerAccountLink": "https://explore.bitcoingold.site/address/{0}"
+    },
+    "cheetahcoin": {
+        "name": "Cheetahcoin",
+        "canonicalName": "Cheetahcoin",
+        "symbol": "CHTA",
+        "family": "bitcoin",
+        "website": "https://cheetahcoin.org/",
+        "coinbaseHasher": { "hash": "sha256d" },
+        "headerHasher": { "hash": "sha256d" },
+        "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
+        "shareMultiplier": 1,
+        "coinbaseMinConfimations": 100,
+        "targetBlockTime": 120,
+        "addressPrefix": { "pubkeyHash": 28, "scriptHash": 5 },
+        "explorerBlockLink": "http://chtaexplorer.mooo.com:3002/block/$hash$",
+        "explorerTxLink": "http://chtaexplorer.mooo.com:3002/tx/{0}",
+        "explorerAccountLink": "http://chtaexplorer.mooo.com:3002/address/{0}"
     }
 }
