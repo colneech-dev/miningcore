@@ -13,7 +13,7 @@
 set -euo pipefail
 
 REPO=/gitrepos/miningcore
-BRANCH="${1:-rsk}"
+BRANCH="${1:-main}"
 CONFIG_DIR=/data/.miningcore/config
 IMAGE=miningcore:local
 STAMP=$(date +%Y%m%d-%H%M%S)
