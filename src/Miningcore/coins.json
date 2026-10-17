@@ -6971,7 +6971,7 @@
         "headerHasher": { "hash": "scrypt", "args": [1024, 1] },
         "blockHasher": { "hash": "reverse", "args": [{ "hash": "sha256d" }] },
         "shareMultiplier": 65536,
-        "coinbaseMinConfimations": 31,
+        "coinbaseMinConfimations": 50,
         "explorerBlockLink": "https://corgicoin.co/explorer?block=$hash$",
         "explorerTxLink": "https://corgicoin.co/explorer?tx={0}",
         "explorerAccountLink": "https://corgicoin.co/explorer?address={0}"
