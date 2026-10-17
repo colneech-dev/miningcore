@@ -87,4 +87,51 @@ public class AuxPowTargetTests
     {
         Assert.Null(AuxPowManager.ResolveTarget(null, null));
     }
+
+    // The resolution reported alongside the value drives RefreshAsync's logging: None and
+    // Mismatch are the two cases that would otherwise fail silently and must be warned about.
+
+    [Fact]
+    public void Resolution_BigEndianTarget_IsBigEndian()
+    {
+        AuxPowManager.ResolveTarget("0000000000000009f9fa00000000000000000000000000000000000000000000", "1909f9fa", out var how);
+        Assert.Equal(AuxPowManager.TargetResolution.BigEndian, how);
+    }
+
+    [Fact]
+    public void Resolution_LittleEndianTarget_IsLittleEndian()
+    {
+        var leHex = Reverse("00000000ffff0000000000000000000000000000000000000000000000000000");
+        AuxPowManager.ResolveTarget(leHex, "1d00ffff", out var how);
+        Assert.Equal(AuxPowManager.TargetResolution.LittleEndian, how);
+    }
+
+    [Fact]
+    public void Resolution_BitsOnly_IsFromBits()
+    {
+        AuxPowManager.ResolveTarget(null, "1a130141", out var how);
+        Assert.Equal(AuxPowManager.TargetResolution.FromBits, how);
+    }
+
+    [Fact]
+    public void Resolution_TargetOnly_IsUnchecked()
+    {
+        AuxPowManager.ResolveTarget("0000000000000000000000000000000000000000000000000000ffff00000000", null, out var how);
+        Assert.Equal(AuxPowManager.TargetResolution.LittleEndianUnchecked, how);
+    }
+
+    [Fact]
+    public void Resolution_Inconsistent_IsMismatch()
+    {
+        AuxPowManager.ResolveTarget("0000000000000009f9fa00000000000000000000000000000000000000000000", "1d00ffff", out var how);
+        Assert.Equal(AuxPowManager.TargetResolution.Mismatch, how);
+    }
+
+    [Fact]
+    public void Resolution_NothingReported_IsNone()
+    {
+        var value = AuxPowManager.ResolveTarget(null, null, out var how);
+        Assert.Null(value);
+        Assert.Equal(AuxPowManager.TargetResolution.None, how);
+    }
 }
