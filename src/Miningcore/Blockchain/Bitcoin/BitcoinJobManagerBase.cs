@@ -270,7 +270,9 @@ public abstract class BitcoinJobManagerBase<TJob> : JobManagerBase<TJob>
     {
         var submitBlockRequest = hasSubmitBlockMethod
             ? new RpcRequest(BitcoinCommands.SubmitBlock, new[] { blockHex })
-            : new RpcRequest(BitcoinCommands.GetBlockTemplate, new { mode = "submit", data = blockHex });
+            // BIP22 positional form: params must be an ARRAY holding the request object. Legacy daemons
+            // (e.g. CorgiCoin, Bitcoin 0.8-era) reject a bare object with "Params must be an array".
+            : new RpcRequest(BitcoinCommands.GetBlockTemplate, new object[] { new { mode = "submit", data = blockHex } });
 
         var batch = new []
         {
