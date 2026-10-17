@@ -45,3 +45,30 @@ public class AlgoHashrateTests
         Assert.Null(BitcoinUtils.PickAlgoHashrate(new Dictionary<string, double> { ["scrypt"] = 0 }, "scrypt"));
     }
 }
+
+public class CompetingBlockTests
+{
+    [Fact]
+    public void Block_that_holds_its_own_coinbase_is_not_competing()
+    {
+        Assert.False(BitcoinUtils.IsCompetingBlock("91682424335127CB", "91682424335127cb"));
+    }
+
+    [Fact]
+    public void Duplicate_block_sharing_a_coinbase_txid_is_competing()
+    {
+        // two blocks from one job: same coinbase txid, different block hashes (real data from the Corgi pool)
+        Assert.False(BitcoinUtils.IsCompetingBlock("91682424335127cb9a5d", "91682424335127cb9a5d"));
+        Assert.True(BitcoinUtils.IsCompetingBlock("91682424335127cb9a5d", "eeb93f854d2c31aabbcc"));
+    }
+
+    [Theory]
+    [InlineData(null, "abc")]
+    [InlineData("", "abc")]
+    [InlineData("abc", null)]
+    [InlineData("abc", "")]
+    public void Unknown_hashes_never_orphan_a_block(string coinbaseBlockHash, string blockHash)
+    {
+        Assert.False(BitcoinUtils.IsCompetingBlock(coinbaseBlockHash, blockHash));
+    }
+}

@@ -76,4 +76,17 @@ public static class BitcoinUtils
 
         return key != null && perAlgo.TryGetValue(key, out var hps) && hps > 0 ? hps : null;
     }
+
+    /// <summary>
+    /// True when the daemon reports a block hash for the coinbase transaction that differs from the block we
+    /// are classifying, i.e. this block lost to a competing block built from the same job.
+    /// Unknown hashes (null/empty) never count as competing.
+    /// </summary>
+    public static bool IsCompetingBlock(string coinbaseBlockHash, string blockHash)
+    {
+        if(string.IsNullOrEmpty(coinbaseBlockHash) || string.IsNullOrEmpty(blockHash))
+            return false;
+
+        return !string.Equals(coinbaseBlockHash, blockHash, StringComparison.OrdinalIgnoreCase);
+    }
 }

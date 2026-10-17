@@ -164,6 +164,20 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
                     messageBus.NotifyBlockUnlocked(poolConfig.Id, block, coin);
                 }
 
+                // On very low-difficulty chains one job can yield several blocks. They all share the same coinbase txid,
+                // but the daemon only holds that transaction in the block that made it onto the chain. A block whose own
+                // hash is not the block containing its coinbase is a stale duplicate: never credit it a second time.
+                else if(BitcoinUtils.IsCompetingBlock(transactionInfo.BlockHash, block.Hash))
+                {
+                    block.Status = BlockStatus.Orphaned;
+                    block.Reward = 0;
+                    result.Add(block);
+
+                    logger.Info(() => $"[{LogCategory}] Block {block.BlockHeight} [{block.Hash}] classified as orphaned: its coinbase is in block {transactionInfo.BlockHash}");
+
+                    messageBus.NotifyBlockUnlocked(poolConfig.Id, block, coin);
+                }
+
                 else
                 {
                     // Top-level Amount is 0 for watch-only coinbase outputs; fall back to summing details
