@@ -256,6 +256,13 @@ public abstract class BitcoinJobManagerBase<TJob> : JobManagerBase<TJob>
             // Fall back to alternative RPC if coin does not report Network HPS (Digibyte)
             if(BlockchainStats.NetworkHashrate == 0 && results[2].Error == null)
                 BlockchainStats.NetworkHashrate = results[2].Response.Value<double>();
+
+            // Multi-algorithm chains (DigiByte): networkhashps is only the default algorithm (sha256d), so the
+            // Scrypt and Odocrypt pools would all show the SHA256 figure. Use this pool's own algorithm instead.
+            var algoHashrate = BitcoinUtils.PickAlgoHashrate(miningInfoResponse.NetworkHashesPs,
+                (poolConfig.Template as BitcoinTemplate)?.HeaderHasher?.Value<string>("hash"));
+            if(algoHashrate.HasValue)
+                BlockchainStats.NetworkHashrate = algoHashrate.Value;
         }
 
         catch(Exception e)

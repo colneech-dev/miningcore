@@ -53,4 +53,27 @@ public static class BitcoinUtils
         Debug.Assert(result.GetAddress(litecoin).ToString() == address);
         return result;
     }
+
+    /// <summary>
+    /// Maps a coin template's header hasher to the algorithm key a multi-algorithm daemon uses in
+    /// getmininginfo.networkhashesps, and returns that algorithm's hashrate (null if not applicable).
+    /// </summary>
+    public static double? PickAlgoHashrate(Dictionary<string, double> perAlgo, string headerHasher)
+    {
+        if(perAlgo == null || perAlgo.Count == 0 || string.IsNullOrEmpty(headerHasher))
+            return null;
+
+        var key = headerHasher.ToLowerInvariant() switch
+        {
+            "sha256d" => "sha256d",
+            "scrypt" => "scrypt",
+            "skein" => "skein",
+            "qubit" => "qubit",
+            "odocrypt" => "odo",
+            "groestl-myriad" or "groestl" => "groestl",
+            _ => null
+        };
+
+        return key != null && perAlgo.TryGetValue(key, out var hps) && hps > 0 ? hps : null;
+    }
 }
