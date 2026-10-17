@@ -86,6 +86,9 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
         return Task.CompletedTask;
     }
 
+    // cleared the first time a daemon rejects gettransaction's include_watchonly argument
+    private bool getTransactionAcceptsWatchOnly = true;
+
     public virtual async Task<Block[]> ClassifyBlocksAsync(IMiningPool pool, Block[] blocks, CancellationToken ct)
     {
         Contract.RequiresNonNull(poolConfig);
@@ -105,11 +108,23 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
 
             // build command batch (block.TransactionConfirmationData is the hash of the blocks coinbase transaction)
             // include_watchonly=true so watch-only addresses (e.g. P2PKH form of a P2SH pool address) are included in details
-            var batch = page.Select(block => new RpcRequest(BitcoinCommands.GetTransaction,
-                new object[] { block.TransactionConfirmationData, true })).ToArray();
+            RpcRequest[] BuildBatch(bool withWatchOnly) => page.Select(block => new RpcRequest(BitcoinCommands.GetTransaction,
+                withWatchOnly
+                    ? new object[] { block.TransactionConfirmationData, true }
+                    : new object[] { block.TransactionConfirmationData })).ToArray();
 
             // execute batch
-            var results = await rpcClient.ExecuteBatchAsync(logger, ct, batch);
+            var results = await rpcClient.ExecuteBatchAsync(logger, ct, BuildBatch(getTransactionAcceptsWatchOnly));
+
+            // Legacy daemons (e.g. CorgiCoin, Bitcoin 0.8-era) only take <txid> and answer the 2-argument form with their
+            // usage string (code -1). Detect that once, remember it, and retry with the single-argument form.
+            if(getTransactionAcceptsWatchOnly &&
+               results.Any(r => r.Error is {Code: -1} && r.Error.Message?.StartsWith("gettransaction <txid>", StringComparison.OrdinalIgnoreCase) == true))
+            {
+                logger.Info(() => $"[{LogCategory}] Daemon does not accept the include_watchonly argument for gettransaction; using the single-argument form");
+                getTransactionAcceptsWatchOnly = false;
+                results = await rpcClient.ExecuteBatchAsync(logger, ct, BuildBatch(false));
+            }
 
             for(var j = 0; j < results.Length; j++)
             {
