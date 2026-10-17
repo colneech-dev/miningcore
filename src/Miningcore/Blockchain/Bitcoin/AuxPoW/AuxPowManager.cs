@@ -128,13 +128,7 @@ public class AuxPowManager : IDisposable
                 FetchedAt = DateTimeOffset.UtcNow,
             };
 
-            if(!string.IsNullOrEmpty(block.Target))
-                block.TargetValue = new uint256(block.Target.HexToByteArray()); // target is already little-endian (internal byte order)
-            else if(!string.IsNullOrEmpty(block.Bits))
-            {
-                var tmp = new NBitcoin.Target(block.Bits.HexToByteArray());
-                block.TargetValue = tmp.ToUInt256();
-            }
+            block.TargetValue = ResolveTarget(block.Target, block.Bits);
 
             currentAuxBlock = block;
             Interlocked.Exchange(ref lastFetchTicks, DateTimeOffset.UtcNow.Ticks);
@@ -208,6 +202,59 @@ public class AuxPowManager : IDisposable
         auxBlockInvalidated = true;
 
         return accepted;
+    }
+
+    /// <summary>
+    /// Turns the daemon's reported target into the uint256 used for share comparison.
+    ///
+    /// Namecoin-family daemons report <c>_target</c> (or <c>target</c>) as little-endian hex, which is
+    /// what this class has always assumed. Newer Bitcoin Core forks (S256, Qbit) instead report
+    /// <c>target</c> as big-endian display hex. Read as little-endian that value is astronomically
+    /// small, so no share would ever qualify and merged mining would fail silently.
+    ///
+    /// <c>bits</c> is unambiguous, so it is used to decide which reading is right: whichever
+    /// interpretation re-compacts to the reported bits wins. If neither does (or bits is absent) the
+    /// historical little-endian reading is kept, so existing chains behave exactly as before.
+    /// </summary>
+    public static uint256 ResolveTarget(string targetHex, string bitsHex)
+    {
+        uint? bitsCompact = null;
+        uint256 fromBits = null;
+
+        if(!string.IsNullOrEmpty(bitsHex))
+        {
+            try
+            {
+                var t = new NBitcoin.Target(bitsHex.HexToByteArray());
+                bitsCompact = t.ToCompact();
+                fromBits = t.ToUInt256();
+            }
+            catch
+            {
+                // malformed bits: fall through to the target-only path
+            }
+        }
+
+        if(string.IsNullOrEmpty(targetHex))
+            return fromBits;
+
+        var bytes = targetHex.HexToByteArray();
+        var asLittleEndian = new uint256(bytes);   // historical assumption
+
+        if(bitsCompact == null)
+            return asLittleEndian;
+
+        if(new NBitcoin.Target(asLittleEndian).ToCompact() == bitsCompact)
+            return asLittleEndian;
+
+        var reversed = (byte[]) bytes.Clone();
+        Array.Reverse(reversed);
+        var asBigEndian = new uint256(reversed);
+
+        if(new NBitcoin.Target(asBigEndian).ToCompact() == bitsCompact)
+            return asBigEndian;
+
+        return asLittleEndian;
     }
 
     // Some daemons serialize integer fields (chainid, height) as JSON strings.
