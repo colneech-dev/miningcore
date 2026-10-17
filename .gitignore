@@ -224,3 +224,6 @@ fabric.properties
 Dockerfile.bak
 build-output/
 build_test/
+
+# local build archives (an untracked build.tar.gz sat in the working tree; one stray git add -A would publish it)
+*.tar.gz
