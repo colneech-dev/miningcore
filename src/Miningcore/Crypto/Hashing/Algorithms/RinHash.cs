@@ -2,7 +2,7 @@ using System;
 using System.Security.Cryptography;
 using Isopoh.Cryptography.Argon2;
 using Miningcore.Contracts;
-using SHA3.Net;
+using Org.BouncyCastle.Crypto.Digests;
 using System.Text;
 using Blake3;
 
@@ -46,8 +46,14 @@ public unsafe class RinHash : IHashAlgorithm
         var argon2 = new Argon2(config);
         var arresult = argon2.Hash();
 
-        var sha3 = Sha3.Sha3256().ComputeHash(arresult.Buffer);
+        // SHA3-256 via BouncyCastle (already a dependency). This replaced the SHA3.Net package, whose
+        // only purpose was this call and which dragged in BouncyCastle.NetCore 1.8.2 and the
+        // NETStandard.Library 1.6 chain of System.* packages with open advisories.
+        var sha3Digest = new Sha3Digest(256);
+        sha3Digest.BlockUpdate(arresult.Buffer, 0, arresult.Buffer.Length);
+        var sha3 = new byte[sha3Digest.GetDigestSize()];
+        sha3Digest.DoFinal(sha3, 0);
 
-        sha3.ToArray().CopyTo(result);
+        sha3.CopyTo(result);
     }
 }

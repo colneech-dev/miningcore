@@ -50,7 +50,7 @@
           <PrivateAssets>all</PrivateAssets>
           <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>
-		<PackageReference Include="Isopoh.Cryptography.Argon2" Version="1.3.0" />
+		<PackageReference Include="Isopoh.Cryptography.Argon2" Version="2.0.0" />
         <PackageReference Include="Microsoft.IO.RecyclableMemoryStream" Version="3.0.0" />
         <PackageReference Include="Newtonsoft.Json.Schema" Version="4.0.1" />
         <PackageReference Include="Npgsql" Version="9.0.3" />
@@ -62,6 +62,13 @@
         </PackageReference>
         <PackageReference Include="NLog.Extensions.Hosting" Version="5.3.8" />
         <PackageReference Include="AutoMapper" Version="12.0.1" />
+        <!-- GHSA-rvv3-g6hj-g44x (High) is open on every AutoMapper release up to 15.1.0 and 16.0.0-16.1.0.
+             The fixed releases (15.1.1+, 16.1.1+) are under the Lucky Penny commercial license, which is
+             a decision for the operator, not a dependency bump. Miningcore maps only trusted data
+             (database entities and config -> API responses); no attacker-controlled input reaches the
+             mapper. Suppressed so the CI vulnerability gate stays meaningful; revisit when licensing is
+             settled. Honoured by NuGet 6.11+ (SDK 8.0.400+); older SDKs ignore it and still warn. -->
+        <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-rvv3-g6hj-g44x" />
         <PackageReference Include="Dapper" Version="2.1.35" />
         <PackageReference Include="FluentValidation" Version="11.11.0" />
         <PackageReference Include="FluentValidation.AspNetCore" Version="11.3.0" />
@@ -81,10 +88,15 @@
         <PackageReference Include="NLog.Extensions.Logging" Version="5.4.0" />
         <PackageReference Include="Polly" Version="8.3.1" />
         <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
+        <!-- NBitcoin.Zcash 3.0.0 (no newer release) still needs the legacy BouncyCastle.Crypto 1.8.2 assembly at
+             runtime. Pinning it here with an alias keeps it out of the global namespace, so Org.BouncyCastle.*
+             in our code resolves to BouncyCastle.Cryptography 2.x only. Nothing in Miningcore uses the alias. -->
+        <PackageReference Include="Portable.BouncyCastle" Version="1.8.2" Aliases="LegacyBouncyCastle" />
+        <!-- MimeKit pulls 10.0.0, which has open advisories; lift the transitive to the patched release -->
+        <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
         <PackageReference Include="prometheus-net.AspNetCore" Version="8.1.0" />
         <PackageReference Include="prometheus-net" Version="8.2.0" />
         <PackageReference Include="protobuf-net" Version="3.2.30" />
-		<PackageReference Include="SHA3.Net" Version="1.1.0" />
         <PackageReference Include="System.Diagnostics.Process" Version="4.3.0" />
         <PackageReference Include="System.Reactive" Version="6.0.0" />
         <PackageReference Include="Grpc.AspNetCore" Version="2.66.0" />

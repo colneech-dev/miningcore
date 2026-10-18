@@ -27,7 +27,8 @@ jobs:
     - name: Check for vulnerable packages
       # dotnet list does not set a non-zero exit code on findings, so grep for them.
       run: |
-        dotnet list src/Miningcore.sln package --vulnerable --include-transitive 2>&1 | tee vulnerable.txt
+        # absolute path: the 8.0.1xx SDK rejects a relative .sln here with MSB0001 "not a rooted path"
+        dotnet list "$GITHUB_WORKSPACE/src/Miningcore.sln" package --vulnerable --include-transitive 2>&1 | tee vulnerable.txt
         ! grep -q "has the following vulnerable packages" vulnerable.txt
     - name: Build
       run: dotnet build --no-restore src
