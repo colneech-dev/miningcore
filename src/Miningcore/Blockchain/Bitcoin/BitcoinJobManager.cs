@@ -1,5 +1,5 @@
 using Autofac;
-using AutoMapper;
+using Miningcore.Mapping;
 using Miningcore.Blockchain.Bitcoin.Configuration;
 using Miningcore.Blockchain.Bitcoin.DaemonResponses;
 using Miningcore.Blockchain.Bitcoin.Custom;

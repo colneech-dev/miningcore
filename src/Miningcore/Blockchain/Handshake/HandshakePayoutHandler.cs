@@ -1,5 +1,5 @@
 using Autofac;
-using AutoMapper;
+using Miningcore.Mapping;
 using Miningcore.Blockchain.Bitcoin;
 using Miningcore.Blockchain.Bitcoin.Configuration;
 using Miningcore.Blockchain.Handshake;
@@ -31,7 +31,7 @@ public class HandshakePayoutHandler : PayoutHandlerBase,
     public HandshakePayoutHandler(
         IComponentContext ctx,
         IConnectionFactory cf,
-        IMapper mapper,
+        MiningcoreMapper mapper,
         IShareRepository shareRepo,
         IBlockRepository blockRepo,
         IBalanceRepository balanceRepo,

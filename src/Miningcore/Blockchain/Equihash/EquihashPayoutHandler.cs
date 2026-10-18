@@ -1,5 +1,5 @@
 using Autofac;
-using AutoMapper;
+using Miningcore.Mapping;
 using Miningcore.Blockchain.Bitcoin;
 using Miningcore.Blockchain.Bitcoin.DaemonResponses;
 using Miningcore.Blockchain.Equihash.Configuration;
@@ -26,7 +26,7 @@ public class EquihashPayoutHandler : BitcoinPayoutHandler
     public EquihashPayoutHandler(
         IComponentContext ctx,
         IConnectionFactory cf,
-        IMapper mapper,
+        MiningcoreMapper mapper,
         IShareRepository shareRepo,
         IBlockRepository blockRepo,
         IBalanceRepository balanceRepo,

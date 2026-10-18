@@ -1,7 +1,7 @@
 using System;
 using System.Linq;
 using Autofac;
-using AutoMapper;
+using Miningcore.Mapping;
 using Miningcore.Blockchain.Xelis.Configuration;
 using Miningcore.Blockchain.Xelis.DaemonRequests;
 using Miningcore.Blockchain.Xelis.DaemonResponses;
@@ -31,7 +31,7 @@ public class XelisPayoutHandler : PayoutHandlerBase,
     public XelisPayoutHandler(
         IComponentContext ctx,
         IConnectionFactory cf,
-        IMapper mapper,
+        MiningcoreMapper mapper,
         IShareRepository shareRepo,
         IBlockRepository blockRepo,
         IBalanceRepository balanceRepo,

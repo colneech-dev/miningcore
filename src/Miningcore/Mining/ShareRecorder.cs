@@ -4,7 +4,7 @@ using System.Reactive.Concurrency;
 using System.Reactive.Linq;
 using System.Reactive.Threading.Tasks;
 using System.Text;
-using AutoMapper;
+using Miningcore.Mapping;
 using Microsoft.Extensions.Hosting;
 using Miningcore.Configuration;
 using Miningcore.Extensions;
@@ -29,7 +29,7 @@ namespace Miningcore.Mining;
 public class ShareRecorder : BackgroundService
 {
     public ShareRecorder(IConnectionFactory cf,
-        IMapper mapper,
+        MiningcoreMapper mapper,
         JsonSerializerSettings jsonSerializerSettings,
         IShareRepository shareRepo,
         IBlockRepository blockRepo,
@@ -66,7 +66,7 @@ public class ShareRecorder : BackgroundService
     private readonly IMessageBus messageBus;
     private readonly ClusterConfig clusterConfig;
     private readonly Dictionary<string, PoolConfig> pools;
-    private readonly IMapper mapper;
+    private readonly MiningcoreMapper mapper;
 
     private IAsyncPolicy faultPolicy;
     private bool hasLoggedPolicyFallbackFailure;
@@ -87,7 +87,7 @@ public class ShareRecorder : BackgroundService
         await cf.RunTx(async (con, tx) =>
         {
             // Insert shares
-            var mapped = shares.Select(mapper.Map<Persistence.Model.Share>).ToArray();
+            var mapped = shares.Select(mapper.ToModel).ToArray();
             await shareRepo.BatchInsertAsync(con, tx, mapped, CancellationToken.None);
 
             // Insert blocks
@@ -96,7 +96,7 @@ public class ShareRecorder : BackgroundService
                 if(!share.IsBlockCandidate)
                     continue;
 
-                var blockEntity = mapper.Map<Block>(share);
+                var blockEntity = mapper.ToBlock(share);
                 blockEntity.Status = BlockStatus.Pending;
                 await blockRepo.InsertAsync(con, tx, blockEntity);
 

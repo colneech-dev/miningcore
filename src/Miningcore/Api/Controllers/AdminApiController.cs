@@ -182,7 +182,7 @@ public class AdminApiController : ApiControllerBase
         if(result == null)
             throw new ApiException("No settings found", HttpStatusCode.NotFound);
 
-        return mapper.Map<Responses.MinerSettings>(result);
+        return mapper.ToResponse(result);
     }
 
     [HttpPost("pools/{poolId}/miners/{address}/settings")]
@@ -198,7 +198,7 @@ public class AdminApiController : ApiControllerBase
             throw new ApiException("Invalid or missing settings", HttpStatusCode.BadRequest);
 
         // map settings
-        var mapped = mapper.Map<Persistence.Model.MinerSettings>(settings);
+        var mapped = mapper.ToModel(settings);
 
         // clamp limit
         if(pool.PaymentProcessing != null)
@@ -216,7 +216,7 @@ public class AdminApiController : ApiControllerBase
 
         logger.Info(()=> $"Updated settings for pool {pool.Id}, miner {address}");
 
-        return mapper.Map<Responses.MinerSettings>(result);
+        return mapper.ToResponse(result);
     }
 
     #endregion // Actions

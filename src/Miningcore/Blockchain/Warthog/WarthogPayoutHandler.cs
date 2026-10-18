@@ -1,7 +1,7 @@
 using System;
 using System.Linq;
 using Autofac;
-using AutoMapper;
+using Miningcore.Mapping;
 using Miningcore.Blockchain.Warthog.Configuration;
 using Miningcore.Blockchain.Warthog.DaemonRequests;
 using Miningcore.Blockchain.Warthog.DaemonResponses;
@@ -34,7 +34,7 @@ public class WarthogPayoutHandler : PayoutHandlerBase,
     public WarthogPayoutHandler(
         IComponentContext ctx,
         IConnectionFactory cf,
-        IMapper mapper,
+        MiningcoreMapper mapper,
         IShareRepository shareRepo,
         IBlockRepository blockRepo,
         IBalanceRepository balanceRepo,

@@ -1,5 +1,5 @@
 using Autofac;
-using AutoMapper;
+using Miningcore.Mapping;
 using Miningcore.Blockchain.Bitcoin.Configuration;
 using Miningcore.Blockchain.Bitcoin.DaemonResponses;
 using Miningcore.Configuration;
@@ -28,7 +28,7 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
     public BitcoinPayoutHandler(
         IComponentContext ctx,
         IConnectionFactory cf,
-        IMapper mapper,
+        MiningcoreMapper mapper,
         IShareRepository shareRepo,
         IBlockRepository blockRepo,
         IBalanceRepository balanceRepo,

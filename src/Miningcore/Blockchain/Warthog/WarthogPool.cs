@@ -2,7 +2,7 @@ using System.Reactive;
 using System.Reactive.Linq;
 using System.Reactive.Threading.Tasks;
 using Autofac;
-using AutoMapper;
+using Miningcore.Mapping;
 using Microsoft.IO;
 using Miningcore.Blockchain.Bitcoin;
 using Miningcore.Blockchain.Warthog;
@@ -31,7 +31,7 @@ public class WarthogPool : PoolBase
         JsonSerializerSettings serializerSettings,
         IConnectionFactory cf,
         IStatsRepository statsRepo,
-        IMapper mapper,
+        MiningcoreMapper mapper,
         IMasterClock clock,
         IMessageBus messageBus,
         RecyclableMemoryStreamManager rmsm,

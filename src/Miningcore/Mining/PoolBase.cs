@@ -5,7 +5,7 @@ using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using System.Text.RegularExpressions;
 using Autofac;
-using AutoMapper;
+using Miningcore.Mapping;
 using Microsoft.IO;
 using Miningcore.Banning;
 using Miningcore.Blockchain;
@@ -36,7 +36,7 @@ public abstract class PoolBase : StratumServer,
         JsonSerializerSettings serializerSettings,
         IConnectionFactory cf,
         IStatsRepository statsRepo,
-        IMapper mapper,
+        MiningcoreMapper mapper,
         IMasterClock clock,
         IMessageBus messageBus,
         RecyclableMemoryStreamManager rmsm,
@@ -66,7 +66,7 @@ public abstract class PoolBase : StratumServer,
     protected readonly IBlockRepository blocksRepo;
     protected readonly IShareRepository shareRepo;
     protected readonly IStatsRepository statsRepo;
-    protected readonly IMapper mapper;
+    protected readonly MiningcoreMapper mapper;
     protected readonly NicehashService nicehashService;
     protected readonly CompositeDisposable disposables = new();
     protected BlockchainStats blockchainStats;
@@ -309,8 +309,8 @@ public abstract class PoolBase : StratumServer,
 
             if(stats != null)
             {
-                poolStats = mapper.Map<PoolStats>(stats);
-                blockchainStats = mapper.Map<BlockchainStats>(stats);
+                poolStats = mapper.ToMiningStats(stats);
+                blockchainStats = mapper.ToBlockchainStats(stats);
             }
         }
 

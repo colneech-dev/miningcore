@@ -61,14 +61,7 @@
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>
         <PackageReference Include="NLog.Extensions.Hosting" Version="5.3.8" />
-        <PackageReference Include="AutoMapper" Version="12.0.1" />
-        <!-- GHSA-rvv3-g6hj-g44x (High) is open on every AutoMapper release up to 15.1.0 and 16.0.0-16.1.0.
-             The fixed releases (15.1.1+, 16.1.1+) are under the Lucky Penny commercial license, which is
-             a decision for the operator, not a dependency bump. Miningcore maps only trusted data
-             (database entities and config -> API responses); no attacker-controlled input reaches the
-             mapper. Suppressed so the CI vulnerability gate stays meaningful; revisit when licensing is
-             settled. Honoured by NuGet 6.11+ (SDK 8.0.400+); older SDKs ignore it and still warn. -->
-        <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-rvv3-g6hj-g44x" />
+        <PackageReference Include="Riok.Mapperly" Version="4.3.1" PrivateAssets="all" ExcludeAssets="runtime" />
         <PackageReference Include="Dapper" Version="2.1.35" />
         <PackageReference Include="FluentValidation" Version="11.11.0" />
         <PackageReference Include="FluentValidation.AspNetCore" Version="11.3.0" />

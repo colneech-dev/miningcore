@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using Autofac;
-using AutoMapper;
+using Miningcore.Mapping;
 using Miningcore.Configuration;
 using Miningcore.Native;
 using Miningcore.Tests.Util;
@@ -35,10 +35,8 @@ public static class ModuleInitializer
 
             builder.RegisterAssemblyModules(typeof(AutofacModule).GetTypeInfo().Assembly);
 
-            // AutoMapper
-            var amConf = new MapperConfiguration(cfg => { cfg.AddProfile(new AutoMapperProfile()); });
-
-            builder.Register((ctx, parms) => amConf.CreateMapper());
+            // object mapping (Mapperly, compile-time generated)
+            builder.RegisterType<MiningcoreMapper>().AsSelf().SingleInstance();
 
             builder.RegisterType<MockMasterClock>().AsImplementedInterfaces();
 

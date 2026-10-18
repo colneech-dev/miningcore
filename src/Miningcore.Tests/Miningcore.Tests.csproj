@@ -41,8 +41,6 @@
     <PackageReference Include="Npgsql" Version="9.0.3" />
     <PackageReference Include="NSubstitute" Version="4.4.0" />
     <PackageReference Include="xunit" Version="2.9.3" />
-    <!-- Transitive via the Miningcore project reference; see the justification on the suppression there. -->
-    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-rvv3-g6hj-g44x" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>

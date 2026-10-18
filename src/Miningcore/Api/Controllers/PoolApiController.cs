@@ -111,7 +111,7 @@ public class PoolApiController : ApiControllerBase
 
                 var minersByHashrate = await cf.Run(con => statsRepo.PagePoolMinersByHashrateAsync(con, config.Id, from, 0, 15, ct));
 
-                result.TopMiners = minersByHashrate.Select(mapper.Map<MinerPerformanceStats>).ToArray();
+                result.TopMiners = minersByHashrate.Select(mapper.ToResponse).ToArray();
 
                 return result;
             }).ToArray())
@@ -199,7 +199,7 @@ public class PoolApiController : ApiControllerBase
         var from = clock.Now.AddHours(-topMinersRange);
 
         response.Pool.TopMiners = (await cf.Run(con => statsRepo.PagePoolMinersByHashrateAsync(con, pool.Id, from, 0, 15, ct)))
-            .Select(mapper.Map<MinerPerformanceStats>)
+            .Select(mapper.ToResponse)
             .ToArray();
 
         return response;
@@ -235,7 +235,7 @@ public class PoolApiController : ApiControllerBase
 
         var response = new GetPoolStatsResponse
         {
-            Stats = stats.Select(mapper.Map<AggregatedPoolStats>).ToArray()
+            Stats = stats.Select(mapper.ToResponse).ToArray()
         };
 
         return response;
@@ -253,7 +253,7 @@ public class PoolApiController : ApiControllerBase
         var start = end.AddHours(-topMinersRange);
 
         var miners = (await cf.Run(con => statsRepo.PagePoolMinersByHashrateAsync(con, pool.Id, start, page, pageSize, ct)))
-            .Select(mapper.Map<MinerPerformanceStats>)
+            .Select(mapper.ToResponse)
             .ToArray();
 
         return miners;
@@ -271,7 +271,7 @@ public class PoolApiController : ApiControllerBase
             new[] { BlockStatus.Confirmed, BlockStatus.Pending, BlockStatus.Orphaned };
 
         var blocks = (await cf.Run(con => blocksRepo.PageBlocksAsync(con, pool.Id, blockStates, page, pageSize, ct)))
-            .Select(mapper.Map<Responses.Block>)
+            .Select(mapper.ToResponse)
             .ToArray();
 
         // enrich blocks
@@ -312,7 +312,7 @@ public class PoolApiController : ApiControllerBase
         uint pageCount = (uint) Math.Floor(itemCount / (double) pageSize);
 
         var blocks = (await cf.Run(con => blocksRepo.PageBlocksAsync(con, pool.Id, blockStates, page, pageSize, ct)))
-            .Select(mapper.Map<Responses.Block>)
+            .Select(mapper.ToResponse)
             .ToArray();
 
         // enrich blocks
@@ -348,7 +348,7 @@ public class PoolApiController : ApiControllerBase
 
         var payments = (await cf.Run(con => paymentsRepo.PagePaymentsAsync(
                 con, pool.Id, null, page, pageSize, ct)))
-            .Select(mapper.Map<Responses.Payment>)
+            .Select(mapper.ToResponse)
             .ToArray();
 
         // enrich payments
@@ -381,7 +381,7 @@ public class PoolApiController : ApiControllerBase
 
         var payments = (await cf.Run(con => paymentsRepo.PagePaymentsAsync(
                 con, pool.Id, null, page, pageSize, ct)))
-            .Select(mapper.Map<Responses.Payment>)
+            .Select(mapper.ToResponse)
             .ToArray();
 
         // enrich payments
@@ -423,7 +423,7 @@ public class PoolApiController : ApiControllerBase
 
         if(statsResult != null)
         {
-            stats = mapper.Map<Responses.MinerStats>(statsResult);
+            stats = mapper.ToResponse(statsResult);
 
             // pre-multiply pending shares to cause less confusion with users
             if(pool.Template.Family == CoinFamily.Bitcoin)
@@ -480,7 +480,7 @@ public class PoolApiController : ApiControllerBase
             new[] { BlockStatus.Confirmed, BlockStatus.Pending, BlockStatus.Orphaned };
 
         var blocks = (await cf.Run(con => blocksRepo.PageMinerBlocksAsync(con, pool.Id, address, blockStates, page, pageSize, ct)))
-            .Select(mapper.Map<Responses.Block>)
+            .Select(mapper.ToResponse)
             .ToArray();
 
         // enrich blocks
@@ -527,7 +527,7 @@ public class PoolApiController : ApiControllerBase
         uint pageCount = (uint) Math.Floor(itemCount / (double) pageSize);
 
         var blocks = (await cf.Run(con => blocksRepo.PageMinerBlocksAsync(con, pool.Id, address, blockStates, page, pageSize, ct)))
-            .Select(mapper.Map<Responses.Block>)
+            .Select(mapper.ToResponse)
             .ToArray();
 
         // enrich blocks
@@ -569,7 +569,7 @@ public class PoolApiController : ApiControllerBase
 
         var payments = (await cf.Run(con => paymentsRepo.PagePaymentsAsync(
                 con, pool.Id, address, page, pageSize, ct)))
-            .Select(mapper.Map<Responses.Payment>)
+            .Select(mapper.ToResponse)
             .ToArray();
 
         // enrich payments
@@ -608,7 +608,7 @@ public class PoolApiController : ApiControllerBase
 
         var payments = (await cf.Run(con => paymentsRepo.PagePaymentsAsync(
                 con, pool.Id, address, page, pageSize, ct)))
-            .Select(mapper.Map<Responses.Payment>)
+            .Select(mapper.ToResponse)
             .ToArray();
 
         // enrich payments
@@ -645,7 +645,7 @@ public class PoolApiController : ApiControllerBase
 
         var balanceChanges = (await cf.Run(con => paymentsRepo.PageBalanceChangesAsync(
                 con, pool.Id, address, page, pageSize, ct)))
-            .Select(mapper.Map<Responses.BalanceChange>)
+            .Select(mapper.ToResponse)
             .ToArray();
 
         return balanceChanges;
@@ -669,7 +669,7 @@ public class PoolApiController : ApiControllerBase
 
         var balanceChanges = (await cf.Run(con => paymentsRepo.PageBalanceChangesAsync(
                 con, pool.Id, address, page, pageSize, ct)))
-            .Select(mapper.Map<Responses.BalanceChange>)
+            .Select(mapper.ToResponse)
             .ToArray();
 
         var response = new PagedResultResponse<Responses.BalanceChange[]>(balanceChanges, itemCount, pageCount);
@@ -754,7 +754,7 @@ public class PoolApiController : ApiControllerBase
         if(result == null)
             throw new ApiException("No settings found", HttpStatusCode.NotFound);
 
-        return mapper.Map<Responses.MinerSettings>(result);
+        return mapper.ToResponse(result);
     }
 
     [HttpPost("{poolId}/miners/{address}/settings")]
@@ -787,7 +787,7 @@ public class PoolApiController : ApiControllerBase
             throw new ApiException("None of the recently used IP addresses matches the request", HttpStatusCode.Forbidden);
 
         // map settings
-        var mapped = mapper.Map<Persistence.Model.MinerSettings>(request.Settings);
+        var mapped = mapper.ToModel(request.Settings);
 
         // clamp limit
         if(pool.PaymentProcessing != null)
@@ -804,7 +804,7 @@ public class PoolApiController : ApiControllerBase
             logger.Info(() => $"Updated settings for pool {pool.Id}, miner {address}");
 
             var result = await minerRepo.GetSettingsAsync(con, tx, mapped.PoolId, mapped.Address);
-            return mapper.Map<Responses.MinerSettings>(result);
+            return mapper.ToResponse(result);
         });
     }
 
@@ -854,7 +854,7 @@ public class PoolApiController : ApiControllerBase
         }
 
         // map
-        var result = mapper.Map<Responses.WorkerPerformanceStatsContainer[]>(stats);
+        var result = mapper.ToResponse(stats);
         return result;
     }
 
@@ -870,7 +870,7 @@ public class PoolApiController : ApiControllerBase
             new[] { BlockStatus.Confirmed, BlockStatus.Pending, BlockStatus.Orphaned };
 
         var blocks = (await cf.Run(con => auxBlocksRepo.PagePoolAuxBlocksAsync(con, poolId, blockStates, page, pageSize, ct)))
-            .Select(mapper.Map<Responses.AuxBlock>)
+            .Select(mapper.ToResponse)
             .ToArray();
 
         EnrichAuxBlockInfoLinks(pool, blocks);
@@ -892,7 +892,7 @@ public class PoolApiController : ApiControllerBase
             new[] { BlockStatus.Confirmed, BlockStatus.Pending, BlockStatus.Orphaned };
 
         var blocks = (await cf.Run(con => auxBlocksRepo.PageMinerAuxBlocksAsync(con, poolId, address, blockStates, page, pageSize, ct)))
-            .Select(mapper.Map<Responses.AuxBlock>)
+            .Select(mapper.ToResponse)
             .ToArray();
 
         EnrichAuxBlockInfoLinks(pool, blocks);

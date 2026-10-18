@@ -25,8 +25,8 @@ jobs:
     - name: Restore dependencies (fails on unsuppressed high/critical advisories)
       # NuGet audit runs during restore and covers transitive packages. NU1903/NU1904 are
       # high/critical advisories, NU1902 moderate; turning them into errors makes the restore
-      # the vulnerability gate. Suppressions, each with a written justification, live next to
-      # the package references in the csproj files as <NuGetAuditSuppress> items.
+      # the vulnerability gate. If an advisory ever has to be accepted, suppress it next to the
+      # package reference in the csproj as a <NuGetAuditSuppress> item with a written justification.
       run: dotnet restore src -p:NuGetAuditMode=all -warnaserror:NU1902,NU1903,NU1904
     - name: Vulnerable package report (informational, includes suppressed)
       # absolute path: some SDKs reject a relative .sln here with MSB0001 "not a rooted path"

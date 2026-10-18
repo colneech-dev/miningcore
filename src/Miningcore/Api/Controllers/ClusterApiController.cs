@@ -48,7 +48,7 @@ public class ClusterApiController : ApiControllerBase
             new[] { BlockStatus.Confirmed, BlockStatus.Pending, BlockStatus.Orphaned };
 
         var blocks = (await cf.Run(con => blocksRepo.PageBlocksAsync(con, blockStates, page, pageSize, ct)))
-            .Select(mapper.Map<Responses.Block>)
+            .Select(mapper.ToResponse)
             .Where(x => enabledPools.Contains(x.PoolId))
             .ToArray();
 
@@ -95,7 +95,7 @@ public class ClusterApiController : ApiControllerBase
             new[] { BlockStatus.Confirmed, BlockStatus.Pending, BlockStatus.Orphaned };
 
         return (await cf.Run(con => auxBlocksRepo.PageAuxBlocksAsync(con, blockStates, page, pageSize, ct)))
-            .Select(mapper.Map<Responses.AuxBlock>)
+            .Select(mapper.ToResponse)
             .Where(x => enabledPools.Contains(x.PoolId))
             .ToArray();
     }

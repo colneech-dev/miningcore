@@ -9,7 +9,7 @@ using AspNetCoreRateLimit;
 using Autofac;
 using Autofac.Extensions.DependencyInjection;
 using Autofac.Features.Metadata;
-using AutoMapper;
+using Miningcore.Mapping;
 using Dapper;
 using FluentValidation;
 using McMaster.Extensions.CommandLineUtils;
@@ -373,9 +373,8 @@ public class Program : BackgroundService
         builder.RegisterInstance(pools);
         builder.RegisterInstance(gcStats);
 
-        // AutoMapper
-        var amConf = new MapperConfiguration(cfg => { cfg.AddProfile(new AutoMapperProfile()); });
-        builder.Register((ctx, parms) => amConf.CreateMapper());
+        // object mapping (Mapperly, compile-time generated)
+        builder.RegisterType<MiningcoreMapper>().AsSelf().SingleInstance();
 
         ConfigurePersistence(builder);
     }

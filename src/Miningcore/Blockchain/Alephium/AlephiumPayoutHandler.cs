@@ -1,6 +1,6 @@
 using System;
 using Autofac;
-using AutoMapper;
+using Miningcore.Mapping;
 using Miningcore.Blockchain.Alephium.Configuration;
 using Miningcore.Configuration;
 using Miningcore.Extensions;
@@ -25,7 +25,7 @@ public class AlephiumPayoutHandler : PayoutHandlerBase,
     public AlephiumPayoutHandler(
         IComponentContext ctx,
         IConnectionFactory cf,
-        IMapper mapper,
+        MiningcoreMapper mapper,
         IShareRepository shareRepo,
         IBlockRepository blockRepo,
         IBalanceRepository balanceRepo,

@@ -3,7 +3,7 @@ using System.Reactive;
 using System.Reactive.Linq;
 using System.Reactive.Threading.Tasks;
 using Autofac;
-using AutoMapper;
+using Miningcore.Mapping;
 using Microsoft.IO;
 using Miningcore.Configuration;
 using Miningcore.Extensions;
@@ -30,7 +30,7 @@ public class BitcoinPool : PoolBase, IAuxMiningPool
         JsonSerializerSettings serializerSettings,
         IConnectionFactory cf,
         IStatsRepository statsRepo,
-        IMapper mapper,
+        MiningcoreMapper mapper,
         IMasterClock clock,
         IMessageBus messageBus,
         RecyclableMemoryStreamManager rmsm,

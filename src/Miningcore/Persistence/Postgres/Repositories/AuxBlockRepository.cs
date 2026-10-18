@@ -1,5 +1,5 @@
 using System.Data;
-using AutoMapper;
+using Miningcore.Mapping;
 using Dapper;
 using Miningcore.Persistence.Model;
 using Miningcore.Persistence.Repositories;
@@ -8,16 +8,16 @@ namespace Miningcore.Persistence.Postgres.Repositories;
 
 public class AuxBlockRepository : IAuxBlockRepository
 {
-    public AuxBlockRepository(IMapper mapper)
+    public AuxBlockRepository(MiningcoreMapper mapper)
     {
         this.mapper = mapper;
     }
 
-    private readonly IMapper mapper;
+    private readonly MiningcoreMapper mapper;
 
     public async Task<bool> InsertAsync(IDbConnection con, IDbTransaction tx, AuxBlock block)
     {
-        var mapped = mapper.Map<Entities.AuxBlock>(block);
+        var mapped = mapper.ToEntity(block);
 
         const string query = @"
             INSERT INTO auxblocks(poolid, chainid, chainname, blockheight, auxblockhash, parentblockhash,
@@ -41,7 +41,7 @@ public class AuxBlockRepository : IAuxBlockRepository
             offset = page * pageSize,
             pageSize
         }, cancellationToken: ct)))
-            .Select(mapper.Map<AuxBlock>)
+            .Select(mapper.ToModel)
             .ToArray();
     }
 
@@ -57,7 +57,7 @@ public class AuxBlockRepository : IAuxBlockRepository
             offset = page * pageSize,
             pageSize
         }, cancellationToken: ct)))
-            .Select(mapper.Map<AuxBlock>)
+            .Select(mapper.ToModel)
             .ToArray();
     }
 
@@ -74,7 +74,7 @@ public class AuxBlockRepository : IAuxBlockRepository
             offset = page * pageSize,
             pageSize
         }, cancellationToken: ct)))
-            .Select(mapper.Map<AuxBlock>)
+            .Select(mapper.ToModel)
             .ToArray();
     }
 
@@ -87,7 +87,7 @@ public class AuxBlockRepository : IAuxBlockRepository
         {
             poolId, chainId, limit
         }, cancellationToken: ct)))
-            .Select(mapper.Map<AuxBlock>)
+            .Select(mapper.ToModel)
             .ToArray();
     }
 
@@ -103,7 +103,7 @@ public class AuxBlockRepository : IAuxBlockRepository
             since = DateTime.UtcNow - window,
             limit
         }, cancellationToken: ct)))
-            .Select(mapper.Map<AuxBlock>)
+            .Select(mapper.ToModel)
             .ToArray();
     }
 
@@ -116,13 +116,13 @@ public class AuxBlockRepository : IAuxBlockRepository
         {
             poolId, chainId, limit
         }, cancellationToken: ct)))
-            .Select(mapper.Map<AuxBlock>)
+            .Select(mapper.ToModel)
             .ToArray();
     }
 
     public async Task UpdateAsync(IDbConnection con, IDbTransaction tx, AuxBlock block)
     {
-        var mapped = mapper.Map<Entities.AuxBlock>(block);
+        var mapped = mapper.ToEntity(block);
 
         const string query = @"UPDATE auxblocks SET status = @status, confirmationprogress = @confirmationprogress,
             blockheight = @blockheight WHERE id = @id";
