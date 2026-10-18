@@ -18,6 +18,15 @@ public unsafe class Odocrypt : IHashAlgorithm
             ? v
             : 10u * 24 * 60 * 60;
 
+    /// <summary>
+    /// DigiByte consensus OdoKey(): nTime rounded DOWN to the interval boundary, NOT nTime / interval.
+    /// The previous `nTime / EpochLength` produced a tiny quotient (~2024) instead of the floored timestamp
+    /// (~1.7e9), so every share hashed with the wrong S-box tables and was rejected.
+    /// Ref: digibyte/src/primitives/block.cpp OdoKey(). Public so a test can pin the formula itself: a hash
+    /// test with nTime = 0 cannot, since both formulas give key 0 there.
+    /// </summary>
+    public static uint OdoKey(ulong nTime) => (uint) (nTime - nTime % EpochLength);
+
     public void Digest(ReadOnlySpan<byte> data, Span<byte> result, params object[] extra)
     {
         Contract.RequiresNonNull(extra);
@@ -25,14 +34,7 @@ public unsafe class Odocrypt : IHashAlgorithm
         Contract.Requires<ArgumentException>(result.Length >= 32);
         Contract.Requires<ArgumentException>(data.Length <= 80);
 
-        var nTime = (ulong) extra[0];
-
-        // DigiByte consensus OdoKey(): nTime rounded DOWN to the interval
-        // boundary, NOT nTime / interval. The previous `nTime / EpochLength`
-        // produced a tiny quotient (~2024) instead of the floored timestamp
-        // (~1.7e9), so every share hashed with the wrong S-box tables and was
-        // rejected. Ref: digibyte/src/primitives/block.cpp OdoKey().
-        var key = (uint) (nTime - nTime % EpochLength);
+        var key = OdoKey((ulong) extra[0]);
 
         fixed(byte* input = data)
         fixed(byte* output = result)

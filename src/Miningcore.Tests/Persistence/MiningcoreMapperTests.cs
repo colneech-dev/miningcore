@@ -136,4 +136,35 @@ public class MiningcoreMapperTests
         Assert.True(info.Ports[3032].Tls);
         Assert.Equal(1024, info.Ports[3032].Difficulty);
     }
+
+    [Fact]
+    public void PoolInfo_CopiesEveryPoolEndpointProperty()
+    {
+        // MiningcoreMapper.Clone copies PoolEndpoint by hand so the served copy can be scrubbed without touching the
+        // live configuration. A property added to PoolEndpoint later would be dropped silently: this fails instead.
+        var endpoint = new PoolEndpoint();
+        var expected = new System.Collections.Generic.Dictionary<string, object>();
+
+        foreach(var p in typeof(PoolEndpoint).GetProperties())
+        {
+            object value = p.PropertyType switch
+            {
+                var t when t == typeof(string) => "value-of-" + p.Name,
+                var t when t == typeof(bool) => true,
+                var t when t == typeof(double) => 12.5,
+                var t when t == typeof(int) => 7,
+                var t when t.IsClass => Activator.CreateInstance(t),
+                _ => throw new Xunit.Sdk.XunitException($"extend this test for PoolEndpoint.{p.Name} ({p.PropertyType.Name})")
+            };
+
+            p.SetValue(endpoint, value);
+            expected[p.Name] = value;
+        }
+
+        var config = new PoolConfig { Id = "p1", Ports = new System.Collections.Generic.Dictionary<int, PoolEndpoint> { [3333] = endpoint } };
+        var copy = new MiningcoreMapper().ToPoolInfo(config).Ports[3333];
+
+        foreach(var p in typeof(PoolEndpoint).GetProperties())
+            Assert.True(Equals(expected[p.Name], p.GetValue(copy)), $"PoolEndpoint.{p.Name} was not copied by the mapper's Clone");
+    }
 }

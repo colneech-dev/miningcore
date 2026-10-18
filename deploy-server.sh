@@ -26,6 +26,19 @@ git fetch origin -q
 git reset --hard "origin/$BRANCH" -q
 log "HEAD: $(git log --oneline -1)"
 
+# The build output targets .NET 10, but a container stays pinned to the image it was CREATED from: restarting a
+# container created from a .NET 8 image would start the new binaries under the old runtime and fail with
+# "Framework Microsoft.NETCore.App 10.0.0 not found". Refuse before touching anything if the running container's
+# runtime has no .NET 10; recreate it from $IMAGE (docker rm -f miningcore, then run it with the same options).
+if docker inspect miningcore >/dev/null 2>&1; then
+  CONTAINER_IMAGE=$(docker inspect -f '{{.Image}}' miningcore)
+  if ! docker run --rm --entrypoint dotnet "$CONTAINER_IMAGE" --list-runtimes 2>/dev/null | grep -q 'Microsoft.NETCore.App 10\.'; then
+    log "ERROR: the miningcore container was created from an image without the .NET 10 runtime."
+    log "       Recreate it from $IMAGE first: docker rm -f miningcore, then docker run/compose with your usual options."
+    exit 1
+  fi
+fi
+
 log "Building image (native-builder cached unless src/Native changed)"
 docker build -t "$IMAGE" "$REPO"
 
