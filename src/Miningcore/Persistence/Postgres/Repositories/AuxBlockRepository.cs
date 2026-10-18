@@ -124,8 +124,10 @@ public class AuxBlockRepository : IAuxBlockRepository
     {
         var mapped = mapper.ToEntity(block);
 
+        // auxblockhash is included because RSK rows are inserted with the merged-mining hash and
+        // upgraded to the real block hash once the confirmer has resolved them on-chain.
         const string query = @"UPDATE auxblocks SET status = @status, confirmationprogress = @confirmationprogress,
-            blockheight = @blockheight WHERE id = @id";
+            blockheight = @blockheight, auxblockhash = @auxblockhash WHERE id = @id";
 
         await con.ExecuteAsync(query, mapped, tx);
     }
