@@ -60,7 +60,8 @@ public abstract class PayoutHandlerBase
     protected readonly MiningcoreMapper mapper;
     protected readonly IPaymentRepository paymentRepo;
     protected readonly IPayoutBatchRepository payoutBatchRepo;
-    private readonly HashSet<long> notifiedStuckBatches = new();
+    // handlers are created per payout cycle (transient in Autofac), so this must be static to notify once per batch
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<long, byte> notifiedStuckBatches = new();
     protected readonly IShareRepository shareRepo;
     protected readonly IMasterClock clock;
     protected readonly IMessageBus messageBus;
@@ -142,10 +143,18 @@ public abstract class PayoutHandlerBase
 
     #region Payout batches (idempotent payouts)
 
-    // RpcClient reports transport failures (timeouts, connection errors, cancellation) as code -500
-    // with no daemon response. For a send that means the outcome is unknown: the daemon may well
-    // have broadcast the transaction. Daemon-reported errors (any other code) mean nothing was sent.
-    protected static bool IsOutcomeUnknown(JsonRpcError error) => error is { Code: -500 };
+    /// <summary>Longest a single send may take before its outcome is considered unknown (default RPC timeout is 30 s).</summary>
+    protected static readonly TimeSpan SendTimeout = TimeSpan.FromMinutes(5);
+
+    // See PayoutErrorClassifier: transport failures where the request may have reached the daemon, and the
+    // wallet codes that can follow an already-recorded transaction, leave the batch pending; a refused
+    // connection or a daemon-reported error proves nothing was sent.
+    protected static bool IsOutcomeUnknown(JsonRpcError error) => PayoutErrorClassifier.IsOutcomeUnknown(error);
+
+    /// <summary>Stored as the transaction id when the wallet accepted a send but returned none; never shown as an explorer link.</summary>
+    protected const string UnknownTransactionId = "unknown";
+
+    protected static string[] TxIdsForNotification(string txId) => string.IsNullOrEmpty(txId) || txId == UnknownTransactionId ? Array.Empty<string>() : new[] { txId };
 
     /// <summary>
     /// Records the intent to pay <paramref name="balances"/> before anything is sent. Throws if the
@@ -165,7 +174,11 @@ public abstract class PayoutHandlerBase
             Updated = now,
         };
 
-        batch.Id = await faultPolicy.ExecuteAsync(() => cf.RunTx((con, tx) => payoutBatchRepo.InsertAsync(con, tx, batch)));
+        // No retry policy here on purpose: nothing has been sent yet, so failing fast is safe, while the
+        // 8-step backoff (about 8 minutes per call) multiplied by many recipients would stall payouts for hours
+        // during a database outage. A lost commit acknowledgement can leave an orphan pending row, which only
+        // halts the pool until an operator resolves it (fail-closed).
+        batch.Id = await cf.RunTx((con, tx) => payoutBatchRepo.InsertAsync(con, tx, batch));
 
         logger.Info(() => $"[{LogCategory}] Payout batch {batch.Id}: {balances.Length} recipient(s), {FormatAmount(balances.Sum(x => x.Amount))}");
         return batch;
@@ -178,52 +191,85 @@ public abstract class PayoutHandlerBase
         batch.Error = error;
 
         await faultPolicy.ExecuteAsync(() => cf.RunTx((con, tx) =>
-            payoutBatchRepo.UpdateStatusAsync(con, tx, batch.Id, PayoutBatchStatus.Failed, null, error, clock.Now)));
+            payoutBatchRepo.UpdateStatusAsync(con, tx, batch.Id, PayoutBatchStatus.Failed, null, error, clock.Now, PayoutBatchStatus.Pending)));
     }
 
     /// <summary>
     /// The wallet accepted the send. First the batch is marked Sent with the transaction id (so a
     /// crash from here on is recoverable), then payments are inserted, balances debited and the
-    /// batch completed in one transaction. If that last step fails the batch stays Sent and
-    /// <see cref="RecoverPayoutBatchesAsync"/> finishes it before the next payout.
+    /// batch completed in one transaction. Never throws: the coins have left the wallet, so a
+    /// failure here must not look like a failed transfer. Returns false when the batch could not be
+    /// completed; it then stays sent (or pending) and <see cref="RecoverPayoutBatchesAsync"/> finishes
+    /// it, or halts the pool, before the next payout.
     /// </summary>
-    protected async Task CompletePayoutBatchAsync(PayoutBatch batch, string transactionConfirmation)
+    protected async Task<bool> CompletePayoutBatchAsync(PayoutBatch batch, string transactionConfirmation)
     {
         Contract.RequiresNonNull(batch);
         Contract.Requires<ArgumentException>(!string.IsNullOrEmpty(transactionConfirmation));
 
         try
         {
+            // pending -> sent; failed is allowed because an operator may have resolved the batch as "not sent"
+            // while the send was still in flight. sent -> sent keeps the call idempotent under retries.
             await faultPolicy.ExecuteAsync(() => cf.RunTx((con, tx) =>
-                payoutBatchRepo.UpdateStatusAsync(con, tx, batch.Id, PayoutBatchStatus.Sent, transactionConfirmation, null, clock.Now)));
+                payoutBatchRepo.UpdateStatusAsync(con, tx, batch.Id, PayoutBatchStatus.Sent, transactionConfirmation, null, clock.Now,
+                    PayoutBatchStatus.Pending, PayoutBatchStatus.Failed, PayoutBatchStatus.Sent)));
         }
 
         catch(Exception ex)
         {
             logger.Fatal(ex, () => $"[{LogCategory}] Payout batch {batch.Id} WAS SENT (tx {transactionConfirmation}) but could not be marked as sent. " +
                 $"Payouts for this pool halt until it is resolved: POST api/admin/pools/{poolConfig.Id}/payoutbatches/{batch.Id}/resolve?outcome=sent&txid={transactionConfirmation}");
-            throw;
+
+            messageBus.SendMessage(new AdminNotification($"Payout sent but not recorded for {poolConfig.Id}",
+                $"Payout batch {batch.Id} was sent in transaction {transactionConfirmation} but the database write failed. Payouts halt for this pool until the batch is resolved via the admin API."));
+            return false;
         }
 
         batch.Status = PayoutBatchStatus.Sent;
         batch.TransactionConfirmationData = transactionConfirmation;
 
-        await FinishSentBatchAsync(batch);
+        try
+        {
+            await FinishSentBatchAsync(batch);
+            return true;
+        }
+
+        catch(Exception)
+        {
+            // already logged with the recipients; the batch stays sent and is finished before the next payout
+            return false;
+        }
     }
 
-    private async Task FinishSentBatchAsync(PayoutBatch batch)
+    /// <summary>
+    /// Inserts payments, debits balances and completes a sent batch in one transaction. The first statement
+    /// moves the batch sent -> completed; if that changes no row someone else already completed it (a retried
+    /// transaction whose acknowledgement was lost, or a concurrent recovery) and nothing else is written, so
+    /// balances can never be debited twice. Returns true when this call completed the batch.
+    /// </summary>
+    private async Task<bool> FinishSentBatchAsync(PayoutBatch batch)
     {
         var balances = PayoutBatchRecipients.Deserialize(batch.PoolId, batch.Recipients);
 
         try
         {
-            await faultPolicy.ExecuteAsync(() => cf.RunTx(async (con, tx) =>
+            var completed = await faultPolicy.ExecuteAsync(() => cf.RunTx(async (con, tx) =>
             {
+                var moved = await payoutBatchRepo.UpdateStatusAsync(con, tx, batch.Id, PayoutBatchStatus.Completed, null, null, clock.Now, PayoutBatchStatus.Sent);
+                if(moved == 0)
+                    return false;
+
                 await PersistPaymentsCoreAsync(con, tx, balances, batch.TransactionConfirmationData);
-                await payoutBatchRepo.UpdateStatusAsync(con, tx, batch.Id, PayoutBatchStatus.Completed, null, null, clock.Now);
+                return true;
             }));
 
-            batch.Status = PayoutBatchStatus.Completed;
+            if(completed)
+                batch.Status = PayoutBatchStatus.Completed;
+            else
+                logger.Info(() => $"[{LogCategory}] Payout batch {batch.Id} was already completed");
+
+            return completed;
         }
 
         catch(Exception ex)
@@ -244,7 +290,24 @@ public abstract class PayoutHandlerBase
         foreach(var batch in open.Where(x => x.Status == PayoutBatchStatus.Sent))
         {
             logger.Warn(() => $"[{LogCategory}] Finishing payout batch {batch.Id} (tx {batch.TransactionConfirmationData}) whose payments were not persisted");
-            await FinishSentBatchAsync(batch);
+
+            try
+            {
+                if(await FinishSentBatchAsync(batch))
+                {
+                    var recovered = PayoutBatchRecipients.Deserialize(batch.PoolId, batch.Recipients);
+                    NotifyPayoutSuccess(poolConfig.Id, recovered,
+                        string.IsNullOrEmpty(batch.TransactionConfirmationData) || batch.TransactionConfirmationData == UnknownTransactionId ? Array.Empty<string>() : new[] { batch.TransactionConfirmationData },
+                        null);
+                }
+            }
+
+            catch(Exception)
+            {
+                messageBus.SendMessage(new AdminNotification($"Payout recovery failed for {poolConfig.Id}",
+                    $"Payout batch {batch.Id} (tx {batch.TransactionConfirmationData}) was sent but its payments could not be persisted. Payouts for this pool are skipped until it can be finished; see the log for the recipients."));
+                throw;
+            }
         }
 
         var stuck = open.Where(x => x.Status == PayoutBatchStatus.Pending).ToArray();
@@ -256,7 +319,7 @@ public abstract class PayoutHandlerBase
             logger.Error(() => $"[{LogCategory}] Payout batch {batch.Id} from {batch.Created:u} has unknown outcome (the process stopped between send and record). " +
                 $"Check the wallet for a transaction paying {batch.Recipients}, then POST api/admin/pools/{poolConfig.Id}/payoutbatches/{batch.Id}/resolve?outcome=sent&txid=<txid> or ?outcome=notsent");
 
-            if(notifiedStuckBatches.Add(batch.Id))
+            if(notifiedStuckBatches.TryAdd(batch.Id, 0))
                 messageBus.SendMessage(new AdminNotification($"Payouts halted for {poolConfig.Id}",
                     $"Payout batch {batch.Id} ({FormatAmount(PayoutBatchRecipients.Deserialize(batch.PoolId, batch.Recipients).Sum(x => x.Amount))}) has an unknown outcome. " +
                     $"Verify in the wallet and resolve it via the admin API; no payouts run for this pool until then."));

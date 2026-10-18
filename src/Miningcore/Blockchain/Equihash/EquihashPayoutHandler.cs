@@ -179,6 +179,9 @@ public class EquihashPayoutHandler : BitcoinPayoutHandler
                 };
             }
 
+            // record the intent before anything leaves the wallet (idempotent payouts, see PayoutHandlerBase)
+            var batch = await BeginPayoutBatchAsync(page);
+
             // send command
             tryTransfer:
             var response = await rpcClient.ExecuteAsync<string>(logger, EquihashCommands.ZSendMany, ct, args);
@@ -209,6 +212,7 @@ public class EquihashPayoutHandler : BitcoinPayoutHandler
                             if(!Enum.TryParse(operationResult.Status, true, out ZOperationStatus status))
                             {
                                 logger.Error(() => $"Unrecognized operation status: {operationResult.Status}");
+                                logger.Error(() => $"[{LogCategory}] Payout batch {batch.Id} stays pending: the operation's outcome is unknown. Payouts for this pool halt until it is resolved via the admin API");
                                 break;
                             }
 
@@ -218,8 +222,9 @@ public class EquihashPayoutHandler : BitcoinPayoutHandler
                                     var txId = operationResult.Result?.Value<string>("txid") ?? string.Empty;
                                     logger.Info(() => $"[{LogCategory}] {EquihashCommands.ZSendMany} completed with transaction id: {txId}");
 
-                                    await PersistPaymentsAsync(page, txId);
-                                    NotifyPayoutSuccess(poolConfig.Id, page, new[] { txId }, null);
+                                    // never throws; the batch is finished by the recovery if persistence fails
+                                    await CompletePayoutBatchAsync(batch, !string.IsNullOrEmpty(txId) ? txId : UnknownTransactionId);
+                                    NotifyPayoutSuccess(poolConfig.Id, page, TxIdsForNotification(txId), null);
 
                                     continueWaiting = false;
                                     continue;
@@ -227,6 +232,7 @@ public class EquihashPayoutHandler : BitcoinPayoutHandler
                                 case ZOperationStatus.Cancelled:
                                 case ZOperationStatus.Failed:
                                     logger.Error(() => $"{EquihashCommands.ZSendMany} failed: {operationResult.Error.Message} code {operationResult.Error.Code}");
+                                    await MarkPayoutBatchFailedAsync(batch, $"{EquihashCommands.ZSendMany} operation {operationResult.Status}: {operationResult.Error?.Message} code {operationResult.Error?.Code}");
                                     NotifyPayoutFailure(poolConfig.Id, page, $"{EquihashCommands.ZSendMany} failed: {operationResult.Error.Message} code {operationResult.Error.Code}", null);
 
                                     continueWaiting = false;
@@ -263,8 +269,9 @@ public class EquihashPayoutHandler : BitcoinPayoutHandler
 
                         else
                         {
-                            logger.Error(() => $"[{LogCategory}] {BitcoinCommands.WalletPassphrase} returned error: {response.Error.Message} code {response.Error.Code}");
-                            NotifyPayoutFailure(poolConfig.Id, page, $"{BitcoinCommands.WalletPassphrase} returned error: {response.Error.Message} code {response.Error.Code}", null);
+                            logger.Error(() => $"[{LogCategory}] {BitcoinCommands.WalletPassphrase} returned error: {unlockResponse.Error.Message} code {unlockResponse.Error.Code}");
+                            NotifyPayoutFailure(poolConfig.Id, page, $"{BitcoinCommands.WalletPassphrase} returned error: {unlockResponse.Error.Message} code {unlockResponse.Error.Code}", null);
+                            await MarkPayoutBatchFailedAsync(batch, "wallet unlock failed");
                             break;
                         }
                     }
@@ -273,6 +280,7 @@ public class EquihashPayoutHandler : BitcoinPayoutHandler
                     {
                         logger.Error(() => $"[{LogCategory}] Wallet is locked but walletPassword was not configured. Unable to send funds.");
                         NotifyPayoutFailure(poolConfig.Id, page, "Wallet is locked but walletPassword was not configured. Unable to send funds.", null);
+                        await MarkPayoutBatchFailedAsync(batch, "wallet is locked and no walletPassword is configured");
                         break;
                     }
                 }
@@ -280,6 +288,11 @@ public class EquihashPayoutHandler : BitcoinPayoutHandler
                 else
                 {
                     logger.Error(() => $"[{LogCategory}] {EquihashCommands.ZSendMany} returned error: {response.Error.Message} code {response.Error.Code}");
+
+                    if(IsOutcomeUnknown(response.Error))
+                        logger.Error(() => $"[{LogCategory}] Payout batch {batch.Id} stays pending: the request may have reached the wallet. Payouts for this pool halt until it is resolved via the admin API");
+                    else
+                        await MarkPayoutBatchFailedAsync(batch, $"{EquihashCommands.ZSendMany} returned error: {response.Error.Message} code {response.Error.Code}");
 
                     NotifyPayoutFailure(poolConfig.Id, page, $"{EquihashCommands.ZSendMany} returned error: {response.Error.Message} code {response.Error.Code}", null);
                 }
@@ -328,6 +341,9 @@ public class EquihashPayoutHandler : BitcoinPayoutHandler
                 amounts, // addresses and associated amounts
             };
 
+            // record the intent before anything leaves the wallet (idempotent payouts, see PayoutHandlerBase)
+            var batch = await BeginPayoutBatchAsync(page);
+
             // send command
             trySendCurrencyTransfer:
             var response = await rpcClient.ExecuteAsync<string>(logger, EquihashCommands.SendCurrency, ct, args);
@@ -358,6 +374,7 @@ public class EquihashPayoutHandler : BitcoinPayoutHandler
                             if(!Enum.TryParse(operationResult.Status, true, out ZOperationStatus status))
                             {
                                 logger.Error(() => $"Unrecognized operation status: {operationResult.Status}");
+                                logger.Error(() => $"[{LogCategory}] Payout batch {batch.Id} stays pending: the operation's outcome is unknown. Payouts for this pool halt until it is resolved via the admin API");
                                 break;
                             }
 
@@ -367,8 +384,9 @@ public class EquihashPayoutHandler : BitcoinPayoutHandler
                                     var txId = operationResult.Result?.Value<string>("txid") ?? string.Empty;
                                     logger.Info(() => $"[{LogCategory}] {EquihashCommands.SendCurrency} completed with transaction id: {txId}");
 
-                                    await PersistPaymentsAsync(page, txId);
-                                    NotifyPayoutSuccess(poolConfig.Id, page, new[] { txId }, null);
+                                    // never throws; the batch is finished by the recovery if persistence fails
+                                    await CompletePayoutBatchAsync(batch, !string.IsNullOrEmpty(txId) ? txId : UnknownTransactionId);
+                                    NotifyPayoutSuccess(poolConfig.Id, page, TxIdsForNotification(txId), null);
 
                                     continueWaiting = false;
                                     continue;
@@ -376,6 +394,7 @@ public class EquihashPayoutHandler : BitcoinPayoutHandler
                                 case ZOperationStatus.Cancelled:
                                 case ZOperationStatus.Failed:
                                     logger.Error(() => $"{EquihashCommands.SendCurrency} failed: {operationResult.Error.Message} code {operationResult.Error.Code}");
+                                    await MarkPayoutBatchFailedAsync(batch, $"{EquihashCommands.SendCurrency} operation {operationResult.Status}: {operationResult.Error?.Message} code {operationResult.Error?.Code}");
                                     NotifyPayoutFailure(poolConfig.Id, page, $"{EquihashCommands.SendCurrency} failed: {operationResult.Error.Message} code {operationResult.Error.Code}", null);
 
                                     continueWaiting = false;
@@ -412,8 +431,9 @@ public class EquihashPayoutHandler : BitcoinPayoutHandler
 
                         else
                         {
-                            logger.Error(() => $"[{LogCategory}] {BitcoinCommands.WalletPassphrase} returned error: {response.Error.Message} code {response.Error.Code}");
-                            NotifyPayoutFailure(poolConfig.Id, page, $"{BitcoinCommands.WalletPassphrase} returned error: {response.Error.Message} code {response.Error.Code}", null);
+                            logger.Error(() => $"[{LogCategory}] {BitcoinCommands.WalletPassphrase} returned error: {unlockResponse.Error.Message} code {unlockResponse.Error.Code}");
+                            NotifyPayoutFailure(poolConfig.Id, page, $"{BitcoinCommands.WalletPassphrase} returned error: {unlockResponse.Error.Message} code {unlockResponse.Error.Code}", null);
+                            await MarkPayoutBatchFailedAsync(batch, "wallet unlock failed");
                             break;
                         }
                     }
@@ -422,6 +442,7 @@ public class EquihashPayoutHandler : BitcoinPayoutHandler
                     {
                         logger.Error(() => $"[{LogCategory}] Wallet is locked but walletPassword was not configured. Unable to send funds.");
                         NotifyPayoutFailure(poolConfig.Id, page, "Wallet is locked but walletPassword was not configured. Unable to send funds.", null);
+                        await MarkPayoutBatchFailedAsync(batch, "wallet is locked and no walletPassword is configured");
                         break;
                     }
                 }
@@ -429,6 +450,11 @@ public class EquihashPayoutHandler : BitcoinPayoutHandler
                 else
                 {
                     logger.Error(() => $"[{LogCategory}] {EquihashCommands.SendCurrency} returned error: {response.Error.Message} code {response.Error.Code}");
+
+                    if(IsOutcomeUnknown(response.Error))
+                        logger.Error(() => $"[{LogCategory}] Payout batch {batch.Id} stays pending: the request may have reached the wallet. Payouts for this pool halt until it is resolved via the admin API");
+                    else
+                        await MarkPayoutBatchFailedAsync(batch, $"{EquihashCommands.SendCurrency} returned error: {response.Error.Message} code {response.Error.Code}");
 
                     NotifyPayoutFailure(poolConfig.Id, page, $"{EquihashCommands.SendCurrency} returned error: {response.Error.Message} code {response.Error.Code}", null);
                 }

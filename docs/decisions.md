@@ -394,8 +394,8 @@ inserts payments, debits balances and marks it `completed` in one transaction;
 `RpcClient` (code -500: timeout, connection error) are treated as unknown outcome and leave the
 batch pending; daemon-reported errors mark it failed. Operators resolve a pending batch through
 `POST api/admin/pools/{id}/payoutbatches/{batchId}/resolve?outcome=sent&txid=…` or
-`?outcome=notsent`. Bitcoin-family (including Equihash) and Handshake handlers use the batches on
-both their `sendmany` and per-address `sendtoaddress` paths.
+`?outcome=notsent`. The Bitcoin-family, Equihash (both async-operation flows) and Handshake handlers use
+the batches.
 
 **Why.** A payout was `sendmany` followed by "insert payments, debit balances" as a second step
 with no record in between. If the second step failed, or the process died between the two, the
@@ -409,6 +409,34 @@ coin-agnostically (wallets differ in how to look a send up).
 **Deployment guard.** `PayoutManager` checks once that `payoutbatches` exists before the first
 payout; if it does not, it logs the migration to run at Fatal and skips payouts (balance updates
 still run) instead of failing every run with a raw database error.
+
+**Review round 2 changes (independent review of the first version).**
+- Equihash's own `z_sendmany` and `sendcurrency` flows are wired in (the first version claimed
+  Equihash was covered through inheritance; only pools with `useBitcoinPayoutHandler` were). A
+  failed or cancelled async operation marks the batch failed; an unrecognised status, a missing
+  operation id or a request that may have reached the wallet leaves it pending.
+- Every status change is a compare-and-set (`UpdateStatusAsync(..., fromStatuses)`). Finishing a
+  sent batch first moves it sent -> completed in the same transaction and writes nothing else if that
+  moves no row, so a retried transaction whose acknowledgement was lost, a concurrent recovery or an
+  operator resolving at the wrong moment can never insert payments or debit balances twice. The admin
+  resolve endpoints only act on pending batches and answer 409 if the batch changed.
+- `CompletePayoutBatchAsync` no longer throws: the coins have already left the wallet, so a persistence
+  failure is logged (with recipients), notified to admins, and left to the recovery instead of being
+  reported as a failed transfer. A recovered batch sends the payout-success notification.
+- "Unknown outcome" is narrower and wider than "any -500": a refused connection or unknown host proves
+  nothing was sent (not unknown); wallet verify codes -25/-26/-27, which old wallets can return after
+  recording the transaction, are treated as unknown. Sends use a 5 minute timeout so a slow `sendmany`
+  is not classed unknown at 30 s, and per-address mode starts no further sends after an unknown outcome.
+- `BeginPayoutBatchAsync` does not retry: nothing is sent yet, and 8 backoff steps per recipient would
+  stall payouts for hours during a database outage.
+- The stuck-batch admin notification is deduplicated in a static set (handlers are transient, so the
+  instance set notified every cycle). The table guard reports only a genuinely missing table, once.
+- An empty transaction id is stored as `unknown` and excluded from explorer links.
+
+**Known limits.** A daemon-reported error is taken to mean nothing was sent, apart from the verify codes
+above. A lost commit acknowledgement on `Begin` can leave an orphan pending row; that halts the pool
+until resolved (fail-closed). The compare-and-set and recovery paths are tested by reading and by unit
+tests of the classifier, not against a real database or wallet.
 
 **Not covered.** The other payout handlers (Ethereum, Kaspa, Cryptonote, Ergo, Alephium, Beam,
 Conceal, Warthog, Xelis, Zano) still persist directly after sending; the base helpers are there

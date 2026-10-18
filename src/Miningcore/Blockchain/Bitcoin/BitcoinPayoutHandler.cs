@@ -268,7 +268,7 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
 
             // send command
             tryTransfer:
-            var result = await rpcClient.ExecuteAsync<string>(logger, BitcoinCommands.SendMany, ct, args);
+            var result = await rpcClient.ExecuteAsync<string>(logger, BitcoinCommands.SendMany, ct, args, timeout: SendTimeout);
 
             if(result.Error == null)
             {
@@ -288,12 +288,9 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
                     logger.Info(() => $"[{LogCategory}] Payment transaction id: {txId}");
 
                 // marks the batch sent, then persists payments and balances; recoverable at every step
-                await CompletePayoutBatchAsync(batch, !string.IsNullOrEmpty(txId) ? txId : "unknown");
+                await CompletePayoutBatchAsync(batch, !string.IsNullOrEmpty(txId) ? txId : UnknownTransactionId);
 
-                NotifyPayoutSuccess(poolConfig.Id, balances, new[]
-                {
-                    txId
-                }, null);
+                NotifyPayoutSuccess(poolConfig.Id, balances, TxIdsForNotification(txId), null);
             }
 
             else
@@ -354,6 +351,7 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
             var txFailures = new List<Tuple<KeyValuePair<string, decimal>, Exception>>();
             var resultsLock = new object();   // successBalances and txFailures are written from Parallel.ForEachAsync lambdas
             var successBalances = new Dictionary<Balance, string>();
+            var halted = 0;   // set after a send with an unknown outcome: no further sends are started this run
 
             var parallelOptions = new ParallelOptions
             {
@@ -370,6 +368,9 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
                     // use a common id for all log entries related to this transfer
                     var transferId = CorrelationIdGenerator.GetNextId();
 
+                    if(Volatile.Read(ref halted) != 0)
+                        throw new Exception($"skipped {address}: payouts halted after a send with an unknown outcome");
+
                     var balance = new Balance { PoolId = poolConfig.Id, Address = address, Amount = amount };
                     var batch = await BeginPayoutBatchAsync(new[] { balance });
 
@@ -379,7 +380,7 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
                     {
                         address,
                         amount,
-                    });
+                    }, timeout: SendTimeout);
 
                     // check result
                     var txId = result.Response;
@@ -389,7 +390,10 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
                         var error = $"[{transferId}] {BitcoinCommands.SendToAddress} returned error: {result.Error.Message} code {result.Error.Code}";
 
                         if(IsOutcomeUnknown(result.Error))
-                            logger.Error(() => $"[{LogCategory}] {error}; no daemon response, so the transaction may have been broadcast. Payout batch {batch.Id} stays pending and payouts are halted until it is resolved");
+                        {
+                            Interlocked.Exchange(ref halted, 1);
+                            logger.Error(() => $"[{LogCategory}] {error}; the transaction may have been broadcast. Payout batch {batch.Id} stays pending and payouts are halted until it is resolved");
+                        }
                         else
                             await MarkPayoutBatchFailedAsync(batch, error);
 
@@ -404,6 +408,8 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
 
                     logger.Info(() => $"[{LogCategory}] [{transferId}] Payment transaction id: {txId}");
 
+                    // never throws; if persistence fails the coins are still sent, so the address counts as paid
+                    // here and the batch is finished by the recovery before the next payout
                     await CompletePayoutBatchAsync(batch, txId);
 
                     lock(resultsLock)

@@ -26,13 +26,25 @@ public class PayoutBatchRepository : IPayoutBatchRepository
         return con.ExecuteScalarAsync<long>(query, mapped, tx);
     }
 
-    public async Task UpdateStatusAsync(IDbConnection con, IDbTransaction tx, long id, PayoutBatchStatus status, string transactionConfirmationData, string error, DateTime updated)
+    public Task<int> UpdateStatusAsync(IDbConnection con, IDbTransaction tx, long id, PayoutBatchStatus status, string transactionConfirmationData, string error, DateTime updated, params PayoutBatchStatus[] fromStatuses)
     {
-        const string query = @"UPDATE payoutbatches SET status = @status, error = @error, updated = @updated,
-            transactionconfirmationdata = COALESCE(@transactionConfirmationData, transactionconfirmationdata)
-            WHERE id = @id";
+        if(fromStatuses == null || fromStatuses.Length == 0)
+            throw new ArgumentException("at least one expected current status is required", nameof(fromStatuses));
 
-        await con.ExecuteAsync(query, new { id, status = status.ToString().ToLowerInvariant(), transactionConfirmationData, error, updated }, tx);
+        const string query = @"UPDATE payoutbatches SET status = @status, updated = @updated,
+            error = COALESCE(@error, error),
+            transactionconfirmationdata = COALESCE(@transactionConfirmationData, transactionconfirmationdata)
+            WHERE id = @id AND status = ANY(@fromStatuses)";
+
+        return con.ExecuteAsync(query, new
+        {
+            id,
+            status = status.ToString().ToLowerInvariant(),
+            transactionConfirmationData,
+            error,
+            updated,
+            fromStatuses = fromStatuses.Select(x => x.ToString().ToLowerInvariant()).ToArray()
+        }, tx);
     }
 
     public async Task<PayoutBatch> GetAsync(IDbConnection con, string poolId, long id, CancellationToken ct)

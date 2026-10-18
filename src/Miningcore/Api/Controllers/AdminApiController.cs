@@ -233,6 +233,7 @@ public class AdminApiController : ApiControllerBase
     {
         var pool = GetPool(poolId);
         pageSize = ClampPageSize(pageSize);
+        page = Math.Max(0, page);
 
         var batches = await cf.Run(con => payoutBatchRepo.PageAsync(con, pool.Id, page, pageSize, HttpContext.RequestAborted));
         return batches.Select(ToResponse).ToArray();
@@ -264,12 +265,16 @@ public class AdminApiController : ApiControllerBase
                 if(string.IsNullOrWhiteSpace(txid))
                     throw new ApiException("outcome=sent requires txid", HttpStatusCode.BadRequest);
 
-                await cf.RunTx((con, tx) => payoutBatchRepo.UpdateStatusAsync(con, tx, id, Persistence.Model.PayoutBatchStatus.Sent, txid.Trim(), "resolved by operator: sent", DateTime.UtcNow));
+                if(await cf.RunTx((con, tx) => payoutBatchRepo.UpdateStatusAsync(con, tx, id, Persistence.Model.PayoutBatchStatus.Sent, txid.Trim(), "resolved by operator: sent", DateTime.UtcNow, Persistence.Model.PayoutBatchStatus.Pending)) == 0)
+                    throw new ApiException($"Payout batch {id} changed state while you were resolving it; reload and check its status", HttpStatusCode.Conflict);
+
                 logger.Warn(() => $"Payout batch {id} of pool {pool.Id} resolved by operator as SENT (tx {txid}); payments are persisted on the next payout run");
                 break;
 
             case "notsent":
-                await cf.RunTx((con, tx) => payoutBatchRepo.UpdateStatusAsync(con, tx, id, Persistence.Model.PayoutBatchStatus.Failed, null, "resolved by operator: not sent", DateTime.UtcNow));
+                if(await cf.RunTx((con, tx) => payoutBatchRepo.UpdateStatusAsync(con, tx, id, Persistence.Model.PayoutBatchStatus.Failed, null, "resolved by operator: not sent", DateTime.UtcNow, Persistence.Model.PayoutBatchStatus.Pending)) == 0)
+                    throw new ApiException($"Payout batch {id} changed state while you were resolving it; reload and check its status", HttpStatusCode.Conflict);
+
                 logger.Warn(() => $"Payout batch {id} of pool {pool.Id} resolved by operator as NOT SENT; its balances are paid on the next payout run");
                 break;
 

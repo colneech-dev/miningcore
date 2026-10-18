@@ -1,3 +1,4 @@
+using Npgsql;
 using Dapper;
 using System.Collections.Concurrent;
 using System.Reactive.Concurrency;
@@ -198,11 +199,13 @@ public class PayoutManager : BackgroundService
     }
 
     private bool payoutBatchTableChecked;
+    private bool payoutBatchTableMissingReported;
 
     /// <summary>
     /// payoutbatches is required (add_payoutbatches.sql). Without it every payout would fail inside
-    /// BeginPayoutBatchAsync with a raw database error on each run, so the missing table is reported
-    /// once at Fatal with the fix, and payouts (not balance updates) are skipped until it exists.
+    /// BeginPayoutBatchAsync, so a missing table is reported once at Fatal with the fix and payouts (not
+    /// balance updates) are skipped until it exists. Any other failure (database down, shutdown) is not
+    /// "table missing": it is logged as a warning and the payout is skipped for this cycle only.
     /// </summary>
     private async Task<bool> EnsurePayoutBatchTableAsync(CancellationToken ct)
     {
@@ -216,10 +219,26 @@ public class PayoutManager : BackgroundService
             return true;
         }
 
+        catch(Exception ex) when(ex is PostgresException { SqlState: PostgresErrorCodes.UndefinedTable })
+        {
+            if(!payoutBatchTableMissingReported)
+            {
+                payoutBatchTableMissingReported = true;
+                logger.Fatal(() => "Payouts are disabled: the payoutbatches table is missing. " +
+                    "Run src/Miningcore/Persistence/Postgres/Scripts/add_payoutbatches.sql against the database and restart.");
+            }
+
+            return false;
+        }
+
+        catch(OperationCanceledException)
+        {
+            return false;
+        }
+
         catch(Exception ex)
         {
-            logger.Fatal(() => $"Payouts are disabled: the payoutbatches table is missing or unreadable ({ex.Message}). " +
-                "Run src/Miningcore/Persistence/Postgres/Scripts/add_payoutbatches.sql against the database and restart.");
+            logger.Warn(() => $"Could not verify the payoutbatches table ({ex.GetType().Name}: {ex.Message}); skipping payouts this cycle");
             return false;
         }
     }
