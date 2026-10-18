@@ -583,7 +583,10 @@ public class BitcoinJob
             BlockHeight = BlockTemplate.Height,
             NetworkDifficulty = Difficulty,
             Difficulty = stratumDifficulty / shareMultiplier,
-            HashDifficulty = shareDiff,
+            // daemon units, like Difficulty and NetworkDifficulty: shareDiff carries the stratum
+            // share multiplier for the comparison with the worker's stratum difficulty above, and
+            // the multiplier is a display convention that must not reach the database
+            HashDifficulty = shareDiff / shareMultiplier,
         };
 
         // Check aux chain targets for merged mining

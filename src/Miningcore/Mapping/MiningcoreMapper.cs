@@ -50,7 +50,8 @@ public partial class MiningcoreMapper
             return null;
 
         var block = ToBlockCore(share);
-        // Share.Difficulty is the share's own difficulty; the block's difficulty is the hash difficulty, when known
+        // Share.Difficulty is the share's own difficulty; the block's difficulty is the hash difficulty,
+        // when known. Both are in daemon units (see Blockchain/Bitcoin/DifficultyUnits.cs).
         block.Difficulty = share.HashDifficulty > 0 ? share.HashDifficulty : null;
         return block;
     }

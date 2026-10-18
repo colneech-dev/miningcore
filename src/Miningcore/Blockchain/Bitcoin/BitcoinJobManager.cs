@@ -58,13 +58,28 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
         auxBlockRepo = ctx.Resolve<IAuxBlockRepository>();
     }
 
-    private static double? AuxNetworkDifficulty(AuxBlockData auxBlock)
+    // Difficulties recorded for aux blocks are in the aux chain's daemon units (see DifficultyUnits).
+    // Every Bitcoin-derived chain shares Bitcoin's difficulty-1 target, so for them, and for RSK and
+    // Hathor which have no comparable native scale, parent and aux units coincide.
+    private BigInteger parentDiff1 = BitcoinConstants.Diff1;
+    private readonly Dictionary<string, BigInteger> auxDiff1 = new();
+
+    private BigInteger AuxDiff1(AuxChainConfig config)
     {
-        if(auxBlock?.TargetValue == null) return null;
-        var targetBigInt = new BigInteger(auxBlock.TargetValue.ToBytes(), isUnsigned: true);
-        if(targetBigInt.IsZero) return null;
-        return (double) new Miningcore.Util.BigRational(BitcoinConstants.Diff1, targetBigInt);
+        if(!auxDiff1.TryGetValue(config.Id, out var diff1))
+        {
+            diff1 = DifficultyUnits.ParseDiff1(config.Diff1);
+            auxDiff1[config.Id] = diff1;
+        }
+
+        return diff1;
     }
+
+    private static double? AuxNetworkDifficulty(AuxBlockData auxBlock, BigInteger diff1) =>
+        DifficultyUnits.TargetDifficulty(auxBlock?.TargetValue, diff1);
+
+    private double? AuxHashDifficulty(Share share, BigInteger diff1) =>
+        share.HashDifficulty > 0 ? DifficultyUnits.Rescale(share.HashDifficulty, parentDiff1, diff1) : null;
 
     protected override object[] GetBlockTemplateParams()
     {
@@ -320,6 +335,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
     public override void Configure(PoolConfig pc, ClusterConfig cc)
     {
         coin = pc.Template.As<BitcoinTemplate>();
+        parentDiff1 = DifficultyUnits.ParseDiff1(coin.Diff1);
         extraPoolConfig = pc.Extra.SafeExtensionDataAs<BitcoinPoolConfigExtra>();
         extraPoolPaymentProcessingConfig = pc.PaymentProcessing?.Extra?.SafeExtensionDataAs<BitcoinPoolPaymentProcessingConfigExtra>();
 
@@ -775,8 +791,8 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                                 Worker = share.Worker,
                                 Source = clusterConfig.ClusterName,
                                 SubmittedVia = "live",
-                                Difficulty = share.HashDifficulty > 0 ? (double?)share.HashDifficulty : null,
-                                NetworkDifficulty = AuxNetworkDifficulty(auxBlock),
+                                Difficulty = AuxHashDifficulty(share, BitcoinConstants.Diff1),
+                                NetworkDifficulty = AuxNetworkDifficulty(auxBlock, BitcoinConstants.Diff1),
                                 Created = clock.Now,
                             };
 
@@ -833,8 +849,8 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                                 Worker = share.Worker,
                                 Source = clusterConfig.ClusterName,
                                 SubmittedVia = "live",
-                                Difficulty = share.HashDifficulty > 0 ? (double?) share.HashDifficulty : null,
-                                NetworkDifficulty = AuxNetworkDifficulty(auxBlock),
+                                Difficulty = AuxHashDifficulty(share, BitcoinConstants.Diff1),
+                                NetworkDifficulty = AuxNetworkDifficulty(auxBlock, BitcoinConstants.Diff1),
                                 Created = clock.Now,
                             };
 
@@ -904,8 +920,8 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                             Worker = share.Worker,
                             Source = clusterConfig.ClusterName,
                             SubmittedVia = "live",
-                            Difficulty = share.HashDifficulty > 0 ? (double?)share.HashDifficulty : null,
-                            NetworkDifficulty = AuxNetworkDifficulty(auxBlock),
+                            Difficulty = AuxHashDifficulty(share, AuxDiff1(manager.Config)),
+                            NetworkDifficulty = AuxNetworkDifficulty(auxBlock, AuxDiff1(manager.Config)),
                             Created = clock.Now,
                         };
 

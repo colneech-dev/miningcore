@@ -185,3 +185,21 @@ lock around `successBalances.Add` and `txFailures.Add` inside `Parallel.ForEachA
 **Why.** `Dictionary` and `List` are not safe for concurrent writes; with eight parallel sends a
 corrupted collection either throws (payment sent, nothing persisted) or silently drops an entry
 (payment sent, balance not debited, paid again next run).
+
+## 2026-10-18 — Difficulty units: everything stored in daemon units, the share multiplier never reaches the database
+
+**Decision.** `Share.HashDifficulty`, and therefore `blocks.difficulty` and `auxblocks.difficulty`,
+are the hash's difficulty against the chain's difficulty-1 target with no stratum share
+multiplier, the same unit as `shares.difficulty` and every `networkdifficulty` column. Aux chains
+can declare their own `diff1`; the parent's hash difficulty is rescaled by the ratio of the two
+targets (identical for every Bitcoin-derived chain, and used as-is for RSK and Hathor). Helpers
+and the convention live in `Blockchain/Bitcoin/DifficultyUnits.cs`; existing scrypt rows are
+corrected with `Persistence/Postgres/Scripts/backfill_difficulty_units.sh`.
+
+**Why.** Every ratio the pool computes (effort, miner effort, block luck) divides a difficulty
+by a network difficulty, and network difficulty only exists in daemon units. The share multiplier
+(65536 for scrypt, 256 or 4096 for groestl coins, monacoin unlike other scrypt coins) is a display
+convention for miner software with no on-chain meaning; storing it made `blocks.difficulty` and
+`auxblocks.difficulty` 65536x too high on scrypt pools while the columns next to them were not.
+If a miner-facing number is ever wanted, the API should expose the multiplier as metadata and
+the UI multiply at render time.

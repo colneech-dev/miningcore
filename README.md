@@ -15,6 +15,7 @@ This fork adds the following changes on top of upstream:
 - **Hash difficulty on blocks and aux blocks** — `blocks.difficulty`, `auxblocks.difficulty` and `auxblocks.networkdifficulty` record the actual share hash difficulty and the aux chain's network difficulty at submit time
 - Database migration: `src/Miningcore/Persistence/Postgres/Scripts/add_block_difficulty.sql` (required; without it every block insert fails on a database created before Oct 2026)
 - Database migration: `src/Miningcore/Persistence/Postgres/Scripts/add_auxblocks.sql` creates the `auxblocks` table for merged mining
+- All stored difficulties are in daemon units (no stratum share multiplier); see `docs/decisions.md`. Pools with a share multiplier other than 1 that recorded blocks before Oct 2026 should run `src/Miningcore/Persistence/Postgres/Scripts/backfill_difficulty_units.sh <config.json> <coins.json> | psql -d miningcore` once
 
 ---
 

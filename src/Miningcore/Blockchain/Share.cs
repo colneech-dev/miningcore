@@ -98,7 +98,9 @@ public class Share
     public double NetworkDifficulty { get; set; }
 
     /// <summary>
-    /// Actual difficulty of this specific hash (diff1 / hash). Only set for block candidates.
+    /// Actual difficulty of this specific hash (diff1 / hash) in daemon units, the same unit as
+    /// <see cref="Difficulty"/> and <see cref="NetworkDifficulty"/> (no stratum share multiplier).
+    /// Only set for block candidates. See Blockchain/Bitcoin/DifficultyUnits.cs.
     /// </summary>
     [ProtoIgnore]
     public double HashDifficulty { get; set; }
