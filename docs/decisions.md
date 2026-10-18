@@ -441,3 +441,42 @@ tests of the classifier, not against a real database or wallet.
 **Not covered.** The other payout handlers (Ethereum, Kaspa, Cryptonote, Ergo, Alephium, Beam,
 Conceal, Warthog, Xelis, Zano) still persist directly after sending; the base helpers are there
 for them and the change per handler is the same shape as the Bitcoin one.
+
+## 2026-10-18 — Review round 4 (migration branch): corrections and fixes
+
+**Corrections to earlier entries.**
+- *OdoCrypt vector.* `Odocrypt_Hash` pins this implementation's own output on an input with nTime 0, where the
+  correct key formula and the old buggy one both give key 0; it is a regression pin, not independent evidence.
+  The independent anchor is the DigiByte odo-miner reference vector (`25b32ac3...`, header byte i*7+3, key
+  `0x683b9800`) used by `verify_odocrypt_so.c`; it is now also asserted from `dotnet test`
+  (`Odocrypt_Native_Matches_The_DigiByte_Reference_Vector`, passes against the built library), and
+  `Odocrypt_Key_Is_NTime_Rounded_Down_To_The_Interval` pins the key formula on realistic times (verified to
+  fail with `nTime / interval`). The reference value's own provenance is a code comment, not a block.
+- *AutoMapper entry.* `payoutSchemeConfig` in `/api/pools` was already read from the configured JSON by the
+  controller before the migration, which overwrites the mapper's value, so that output did not change. Pool-info
+  copies: only `Ports` was aliased before; `VarDiff` and `TcpProxyProtocol` are still shared references, and
+  `Clone` is hand-maintained (a test now fails if `PoolEndpoint` gains a property it does not copy).
+- *.NET 10 entry.* The statement that build and tests are identical on both frameworks was too strong. The
+  suite has not been fully green anywhere that lacks the native libraries; with them built it passes.
+- The scripts for Debian 11 and Ubuntu 20.04/21.04 are deleted and the README no longer points at them.
+
+**Fixes.**
+- `deploy-server.sh` refuses to continue if the running `miningcore` container's image has no .NET 10 runtime
+  (a container stays pinned to the image it was created from, so restarting an old container with the new
+  binaries fails at start-up). Recreate it from `miningcore:local` once.
+- `build-ubuntu-22.04.sh` no longer adds a package feed that has no .NET 10; it installs the SDK with
+  Microsoft's installer script (not run on a 22.04 machine from here).
+- Mapperly's unmapped-target diagnostic (RMG020) is now an error; it is only a warning by default.
+- `/api/pools` no longer returns 500 for a malformed template with no hasher (the algorithm name falls back to
+  null, as AutoMapper's null propagation did); an out-of-range `mode` on the miner performance endpoint is a 400.
+- CI actions bumped to checkout@v4 and setup-dotnet@v4.
+
+**Known and accepted.** An empty-string block status in the database now throws in the mapper (it mapped to
+the first enum value under AutoMapper); the column is NOT NULL and the code never writes an empty one.
+`MiningcoreMapper` is registered by hand in `Program.cs` and the test module and no test boots the host.
+The tracked `build/` directory still holds the old net8/AutoMapper binaries; do not deploy from it.
+
+**Integration.** This line of work is based on an older `main`: `main` has seven newer commits (including the
+duplicate-block orphaning in the payout path and the GBT-child merged-mining path). Merge `main` before deploying
+from a branch; `main`'s GBT-child path calls the two-argument `AuxPowManager.ResolveTarget`, so it will not emit
+the target warning until it uses the new overload.

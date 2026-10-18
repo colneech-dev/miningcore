@@ -40,6 +40,11 @@
         <None Remove="config2.json" />
     </ItemGroup>
 
+    <PropertyGroup>
+        <!-- Mapperly reports an unmapped target member (RMG020) and an unmapped source member (RMG012) as warnings by default; a new column or field must not compile silently -->
+        <WarningsAsErrors>$(WarningsAsErrors);RMG020</WarningsAsErrors>
+    </PropertyGroup>
+
     <ItemGroup>
         <PackageReference Include="AspNetCoreRateLimit" Version="5.0.0" />
         <PackageReference Include="Autofac" Version="8.2.0" />

@@ -754,6 +754,11 @@ public class PoolApiController : ApiControllerBase
         if(string.IsNullOrEmpty(address))
             throw new ApiException("Invalid or missing miner address", HttpStatusCode.NotFound);
 
+        // the enum binds any integer; an undefined value used to fall through and answer 200 [], and with the
+        // compile-time mapper (null collections stay null) it would answer 204
+        if(!Enum.IsDefined(mode))
+            throw new ApiException("Invalid mode", HttpStatusCode.BadRequest);
+
         if(pool.Template.Family == CoinFamily.Ethereum)
             address = address.ToLower();
 

@@ -61,24 +61,19 @@ cd miningcore
 Depending on your OS Version run either of these scripts:
 
 ```console
-./build-debian-11.sh
-```
-or
-```console
 ./build-debian-12.sh
-```
-or
-```console
-./build-ubuntu-20.04.sh
-```
-or
-```console
-./build-ubuntu-21.04.sh
 ```
 or
 ```console
 ./build-ubuntu-22.04.sh
 ```
+(22.04 has no .NET 10 apt package; the script installs the SDK with Microsoft's installer script)
+or
+```console
+./build-ubuntu-24.04.sh
+```
+
+Debian 11 and Ubuntu 20.04/21.04 are no longer supported: they cannot install the .NET 10 SDK from a package feed. Use the Docker build below on those systems.
 
 ## Building on Windows
 

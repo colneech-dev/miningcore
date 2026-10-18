@@ -212,12 +212,26 @@ public partial class MiningcoreMapper
             Website = template.Website,
             Market = template.Market,
             Family = template.Family.ToString().ToLowerInvariant(),
-            Algorithm = template.GetAlgorithmName(),
+            Algorithm = SafeAlgorithmName(template),
             Twitter = template.Twitter,
             Discord = template.Discord,
             Telegram = template.Telegram,
             CanonicalName = template.CanonicalName,
         };
+    }
+
+    // AutoMapper's MapFrom swallowed a NullReferenceException here and served Algorithm = null; a template without a
+    // hasher (malformed) must keep doing that rather than turn /api/pools into a 500
+    private static string SafeAlgorithmName(CoinTemplate template)
+    {
+        try
+        {
+            return template.GetAlgorithmName();
+        }
+        catch(NullReferenceException)
+        {
+            return null;
+        }
     }
 
     public Responses.ApiPoolPaymentProcessingConfig ToApiPaymentProcessing(PoolPaymentProcessingConfig config)

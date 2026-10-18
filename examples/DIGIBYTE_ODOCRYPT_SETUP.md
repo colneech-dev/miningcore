@@ -13,7 +13,7 @@ The fix that makes OdoCrypt work touches both layers:
 So a stale `bin/` will still be broken. Rebuild the native lib AND the .NET:
 ```
 # native (Linux/WSL build of libmultihash) then:
-dotnet publish -c Release --framework net8.0 -o ../../build src/Miningcore/Miningcore.csproj
+dotnet publish -c Release --framework net10.0 -o ../../build src/Miningcore/Miningcore.csproj
 ```
 Sanity-check the algorithm without the full stack:
 ```
