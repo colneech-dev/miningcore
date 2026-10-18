@@ -101,7 +101,11 @@ public class HashingTests : TestBase
         hasher.Digest(testValue2, hash, 0ul);
         var result = hash.ToHexString();
 
-        Assert.Equal("a7a694a0464fad7d34b5ef3cd28a1caffd8410069e091195fb196f28b298f6dc", result);
+        // Vector regenerated 2026-10-18 from a libmultihash build that passes the DigiByte
+        // consensus gate (verify_odocrypt_so.c). The previous value, a7a694a0...b298f6dc,
+        // had been produced by the pre-2026-06-11 implementation that the consensus fix
+        // (d3b7584) replaced, so this test was asserting the known-bad output.
+        Assert.Equal("5a37cff97820c792e1cdb065ec2da63902825dbf3fb529263f5d95247d894d3c", result);
     }
 
     [Fact]
