@@ -311,6 +311,8 @@ public class WarthogPayoutHandler : PayoutHandlerBase,
             logger.Debug(() => $"[{LogCategory}] Pool does not pay the transaction fee, so each address will have its payout deducted with [{FormatAmount(maximumTransactionFees / WarthogConstants.SmallestUnit)}]");
 
         var txFailures = new List<Tuple<KeyValuePair<string, decimal>, Exception>>();
+
+        var resultsLock = new object();   // successBalances and txFailures are written from Parallel.ForEachAsync lambdas
         var successBalances = new Dictionary<Balance, string>();
 
         Random randomNonceId = new Random();
@@ -400,15 +402,19 @@ public class WarthogPayoutHandler : PayoutHandlerBase,
                 else
                     logger.Info(() => $"[{LogCategory}] [{nonceId}] Payment transaction id: {response.Data.TxHash}");
 
-                successBalances.Add(new Balance
+                lock(resultsLock)
                 {
-                    PoolId = poolConfig.Id,
-                    Address = address,
-                    Amount = amount,
-                }, response.Data.TxHash);
+                    successBalances.Add(new Balance
+                    {
+                        PoolId = poolConfig.Id,
+                        Address = address,
+                        Amount = amount,
+                    }, response.Data.TxHash);
+                }
             }, ex =>
             {
-                txFailures.Add(Tuple.Create(x, ex));
+                lock(resultsLock)
+                    txFailures.Add(Tuple.Create(x, ex));
             });
         });
 

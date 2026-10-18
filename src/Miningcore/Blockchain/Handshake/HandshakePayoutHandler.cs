@@ -330,6 +330,7 @@ public class HandshakePayoutHandler : PayoutHandlerBase,
         else
         {
             var txFailures = new List<Tuple<KeyValuePair<string, decimal>, Exception>>();
+            var resultsLock = new object();   // successBalances and txFailures are written from Parallel.ForEachAsync lambdas
             var successBalances = new Dictionary<Balance, string>();
 
             var parallelOptions = new ParallelOptions
@@ -366,15 +367,19 @@ public class HandshakePayoutHandler : PayoutHandlerBase,
                     else
                         logger.Info(() => $"[{LogCategory}] [{transferId}] Payment transaction id: {txId}");
 
-                    successBalances.Add(new Balance
+                    lock(resultsLock)
                     {
-                        PoolId = poolConfig.Id,
-                        Address = address,
-                        Amount = amount,
-                    }, txId);
+                        successBalances.Add(new Balance
+                        {
+                            PoolId = poolConfig.Id,
+                            Address = address,
+                            Amount = amount,
+                        }, txId);
+                    }
                 }, ex =>
                 {
-                    txFailures.Add(Tuple.Create(x, ex));
+                    lock(resultsLock)
+                        txFailures.Add(Tuple.Create(x, ex));
                 });
             });
 
