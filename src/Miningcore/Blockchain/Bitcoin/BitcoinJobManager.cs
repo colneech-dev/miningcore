@@ -19,6 +19,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NLog;
 using System.Collections.Concurrent;
+using System.Threading.Channels;
 using System.Numerics;
 using System.Reactive.Linq;
 using static Miningcore.Util.ActionUtils;
@@ -41,6 +42,12 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
     private BitcoinTemplate coin;
     private readonly ConcurrentDictionary<string, byte> submittedAuxHashes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, RpcClient> auxRpcClients = new();
+
+    // Aux (merged mining) submissions are handed to a background worker so that a slow aux daemon
+    // never stalls a miner's mining.submit (see SubmitShareAsync / ProcessAuxSubmissionsAsync).
+    private readonly Channel<(Share Share, BitcoinJob Job)> auxSubmitQueue =
+        Channel.CreateUnbounded<(Share, BitcoinJob)>(new UnboundedChannelOptions { SingleReader = true });
+    private IDisposable auxRefreshSubscription;
     private IConnectionFactory cf;
     private IAuxBlockRepository auxBlockRepo;
 
@@ -184,11 +191,13 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
             if(isNew)
                 messageBus.NotifyChainHeight(poolConfig.Id, blockTemplate.Height, poolConfig.Template);
 
-            // Always refresh aux blocks — detect changes even when the primary chain is unchanged
+            // Aux work is refreshed by a background loop (StartAuxRefreshLoop), never awaited here:
+            // with the 30 s RPC timeout a hung aux daemon used to delay every Bitcoin job by up to
+            // 30 s per chain, during which miners worked on a stale template. We only read the cache
+            // and still detect changes even when the primary chain is unchanged.
             AuxBlockData[] currentAuxBlocks = null;
             if(auxPowManagers.Count > 0)
             {
-                await Task.WhenAll(auxPowManagers.Select(m => m.RefreshAsync(ct)));
                 currentAuxBlocks = auxPowManagers
                     .Select(m => m.CurrentAuxBlock)
                     .Where(b => b != null)
@@ -207,11 +216,10 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                 }
             }
 
-            // Refresh RSK work and detect changes
+            // RSK work (cached by the background loop) and change detection
             AuxBlockData currentRskAuxBlock = null;
             if(rskManager != null)
             {
-                await rskManager.RefreshAsync(ct);
                 currentRskAuxBlock = rskManager.CurrentAuxBlock;
 
                 if(!isNew && !forceUpdate && job?.RskAuxBlock?.Hash != null &&
@@ -219,11 +227,10 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                     isNew = true;
             }
 
-            // Refresh Hathor work and detect changes
+            // Hathor work (cached by the background loop) and change detection
             AuxBlockData currentHathorAuxBlock = null;
             if(hathorManager != null)
             {
-                await hathorManager.RefreshAsync(ct);
                 currentHathorAuxBlock = hathorManager.CurrentAuxBlock;
 
                 if(!isNew && !forceUpdate && job?.HathorAuxBlock?.Hash != null &&
@@ -418,242 +425,12 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
             }
         }
 
-        // Submit to any aux chains (merged mining) if this share met their targets
+        // Aux (merged mining) submissions are processed by a background worker so that a slow aux
+        // daemon (30 s RPC timeout) cannot stall this miner's mining.submit and the stratum pipeline
+        // behind it. Everything the worker needs is immutable from here on: the share's aux candidates
+        // and the job they were found on.
         if(share.AuxCandidates?.Count > 0 && (auxPowManagers.Count > 0 || rskManager != null || hathorManager != null))
-        {
-            var submittingJob = job;
-            foreach(var (auxBlock, headerBytes, coinbase, candidateBranch) in share.AuxCandidates)
-            {
-                // Claim the aux block before submitting so two shares that meet the same aux target in
-                // quick succession do not both submit it. The claim is released again below whenever the
-                // submit does not succeed (RPC error, rejection, exception). Before that release existed a
-                // single transient daemon failure made every later share for the same aux block skip as a
-                // "duplicate", and the block was lost for good.
-                var dedupKey = $"{auxBlock.ChainId}:{auxBlock.Hash}";
-                if(!submittedAuxHashes.TryAdd(dedupKey, 1))
-                {
-                    logger.Debug(() => $"Skipping duplicate aux submission for {auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]}");
-                    continue;
-                }
-
-                // RSK uses mnr_submitBitcoinBlock — route by chainId
-                if(rskManager != null && auxBlock.ChainId == rskManager.Config.ChainId)
-                {
-                    try
-                    {
-                        logger.Info(() => $"Submitting merged block to {rskManager.Config.Name}");
-
-                        var coinbaseTxHex = coinbase.ToHexString();
-                        var merkleBranch = candidateBranch ?? submittingJob?.MerkleBranchSteps ?? new List<byte[]>();
-                        var headerHex = headerBytes.ToHexString();
-
-                        logger.Info(() => $"RSK submit: hash={auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]}... coinbaseBranchLen={merkleBranch.Count}");
-                        var rskAccepted = await rskManager.SubmitBitcoinBlockAsync(
-                            auxBlock.Hash, headerHex, coinbaseTxHex, merkleBranch, ct);
-
-                        if(!rskAccepted)
-                            submittedAuxHashes.TryRemove(dedupKey, out _);
-
-                        if(rskAccepted)
-                        {
-                            try
-                            {
-                                EnsureAuxPersistence();
-
-                                // mnr_getWork returns blockHashForMergedMining, which is NOT the RSK block hash
-                                // (keccak256 of the header) stored on-chain. Right after acceptance the node has
-                                // usually not imported the block yet, so the real hash and height cannot be
-                                // resolved here. Record the merged-mining hash with BlockHeight = null and let
-                                // ConfirmRskBlocksAsync resolve both by matching hashForMergedMining on-chain.
-                                // Previously this stored eth_blockNumber (the current tip, not our block) as the
-                                // height; the confirmer then compared the tip's hash with our merged-mining hash,
-                                // found them different by construction, and marked every RSK block orphaned.
-                                string rskBlockHash = auxBlock.Hash;
-                                ulong? rskBlockHeight = null;
-
-                                var latestRes = await rskManager.Rpc.ExecuteAsync<JToken>(logger, "eth_getBlockByNumber", ct, new object[] { "latest", false });
-                                if(latestRes.Error == null && latestRes.Response?.Type == JTokenType.Object)
-                                {
-                                    var resolved = MatchRskBlock(latestRes.Response, auxBlock.Hash);
-                                    if(resolved != null)
-                                    {
-                                        rskBlockHash = resolved.Value.Hash;
-                                        rskBlockHeight = (ulong) resolved.Value.Height;
-                                    }
-                                    else
-                                        logger.Debug(() => $"[rsk] Block {auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]}… not yet imported by the node; the confirmer will resolve its hash and height");
-                                }
-
-                                var record = new Persistence.Model.AuxBlock
-                                {
-                                    PoolId = poolConfig.Id,
-                                    ChainId = rskManager.Config.Id,
-                                    ChainName = rskManager.Config.Name,
-                                    BlockHeight = rskBlockHeight,
-                                    AuxBlockHash = rskBlockHash,
-                                    ParentBlockHash = share.BlockHash,
-                                    Status = Persistence.Model.BlockStatus.Pending,
-                                    ConfirmationProgress = 0,
-                                    Miner = share.Miner,
-                                    Worker = share.Worker,
-                                    Source = clusterConfig.ClusterName,
-                                    SubmittedVia = "live",
-                                    Difficulty = share.HashDifficulty > 0 ? (double?)share.HashDifficulty : null,
-                                    NetworkDifficulty = AuxNetworkDifficulty(auxBlock),
-                                    Created = clock.Now,
-                                };
-
-                                _ = cf.RunTx(async (con, tx) => await auxBlockRepo.InsertAsync(con, tx, record))
-                                    .ContinueWith(t => logger.Error(t.Exception, () => $"Failed to persist RSK block {rskBlockHash}"),
-                                        TaskContinuationOptions.OnlyOnFaulted);
-                            }
-                            catch(Exception ex)
-                            {
-                                logger.Error(ex, () => $"Failed to persist RSK block {auxBlock.Hash}");
-                            }
-                        }
-                    }
-                    catch(Exception ex)
-                    {
-                        logger.Error(ex, () => $"Error submitting RSK merged block: {ex.Message}");
-                        submittedAuxHashes.TryRemove(dedupKey, out _);
-                    }
-
-                    continue;
-                }
-
-                // Hathor uses its own submit protocol — route by chainId
-                if(hathorManager != null && auxBlock.ChainId == hathorManager.Config.ChainId)
-                {
-                    try
-                    {
-                        logger.Info(() => $"Submitting merged block to {hathorManager.Config.Name}");
-
-                        var merkleBranch = candidateBranch ?? submittingJob?.MerkleBranchSteps ?? new List<byte[]>();
-                        var (hathorAccepted, hathorBlockHash, hathorHeight) = await hathorManager.SubmitBlockAsync(
-                            auxBlock.Hash, headerBytes, coinbase, merkleBranch, ct);
-
-                        if(!hathorAccepted)
-                            submittedAuxHashes.TryRemove(dedupKey, out _);
-
-                        if(hathorAccepted)
-                        {
-                            try
-                            {
-                                EnsureAuxPersistence();
-
-                                var record = new Persistence.Model.AuxBlock
-                                {
-                                    PoolId = poolConfig.Id,
-                                    ChainId = hathorManager.Config.Id,
-                                    ChainName = hathorManager.Config.Name,
-                                    BlockHeight = hathorHeight > 0 ? (ulong?) hathorHeight : null,
-                                    AuxBlockHash = hathorBlockHash,
-                                    ParentBlockHash = share.BlockHash,
-                                    Status = Persistence.Model.BlockStatus.Pending,
-                                    ConfirmationProgress = 0,
-                                    // Hathor uses 2 decimals: CoinbaseValue carries HTR cents
-                                    Reward = auxBlock.CoinbaseValue > 0 ? (decimal) auxBlock.CoinbaseValue / 100m : null,
-                                    Miner = share.Miner,
-                                    Worker = share.Worker,
-                                    Source = clusterConfig.ClusterName,
-                                    SubmittedVia = "live",
-                                    Difficulty = share.HashDifficulty > 0 ? (double?) share.HashDifficulty : null,
-                                    NetworkDifficulty = AuxNetworkDifficulty(auxBlock),
-                                    Created = clock.Now,
-                                };
-
-                                _ = cf.RunTx(async (con, tx) => await auxBlockRepo.InsertAsync(con, tx, record))
-                                    .ContinueWith(t => logger.Error(t.Exception, () => $"Failed to persist Hathor block {hathorBlockHash}"),
-                                        TaskContinuationOptions.OnlyOnFaulted);
-                            }
-                            catch(Exception ex)
-                            {
-                                logger.Error(ex, () => $"Failed to persist Hathor block {auxBlock.Hash}");
-                            }
-                        }
-                    }
-                    catch(Exception ex)
-                    {
-                        logger.Error(ex, () => $"Error submitting Hathor merged block: {ex.Message}");
-                        submittedAuxHashes.TryRemove(dedupKey, out _);
-                    }
-
-                    continue;
-                }
-
-                // Standard AuxPoW submission
-                var manager = auxPowManagers.FirstOrDefault(m => string.Equals(m.CurrentAuxBlock?.Hash, auxBlock.Hash, StringComparison.OrdinalIgnoreCase));
-                if(manager == null)
-                {
-                    logger.Debug(() => $"No manager found for aux block {auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]} — block likely superseded");
-                    submittedAuxHashes.TryRemove(dedupKey, out _);
-                    continue;
-                }
-
-                try
-                {
-                    logger.Info(() => "Submitting merged block to " + manager.Config.Name);
-
-                    var coinbaseTxHex = coinbase.ToHexString();
-                    var merkleBranch = candidateBranch ?? submittingJob?.MerkleBranchSteps ?? new List<byte[]>();
-                    var (auxBranch, auxIndex) = AuxPowSerializer.GetAuxMerkleBranch(
-                        submittingJob?.AuxMerkleNodes,
-                        submittingJob?.AuxMerkleTreeSize ?? 1,
-                        submittingJob?.AuxMerkleTreeNonce ?? 0,
-                        auxBlock.ChainId);
-                    var auxPoWHex = AuxPowSerializer.BuildAuxPoWHex(coinbaseTxHex, headerBytes, merkleBranch, auxBranch, auxIndex);
-
-                    logger.Info(() => $"AuxPoW [{manager.Config.Id}] hash={auxBlock.Hash} treeSize={submittingJob?.AuxMerkleTreeSize} auxIndex={auxIndex} auxBranchLen={auxBranch.Count} coinbaseBranchLen={merkleBranch.Count} auxPoW={auxPoWHex}");
-                    var auxAccepted = await manager.SubmitAuxBlockAsync(auxBlock.Hash, auxPoWHex, ct);
-
-                    if(!auxAccepted)
-                        submittedAuxHashes.TryRemove(dedupKey, out _);
-
-                    if(auxAccepted)
-                    {
-                        try
-                        {
-                            EnsureAuxPersistence();
-
-                            var record = new Persistence.Model.AuxBlock
-                            {
-                                PoolId = poolConfig.Id,
-                                ChainId = manager.Config.Id,
-                                ChainName = manager.Config.Name,
-                                BlockHeight = auxBlock.Height > 0 ? (ulong?)auxBlock.Height : null,
-                                AuxBlockHash = auxBlock.Hash,
-                                ParentBlockHash = share.BlockHash,
-                                Status = Persistence.Model.BlockStatus.Pending,
-                                ConfirmationProgress = 0,
-                                Reward = auxBlock.CoinbaseValue > 0 ? (decimal)auxBlock.CoinbaseValue / 100_000_000m : null,
-                                Miner = share.Miner,
-                                Worker = share.Worker,
-                                Source = clusterConfig.ClusterName,
-                                SubmittedVia = "live",
-                                Difficulty = share.HashDifficulty > 0 ? (double?)share.HashDifficulty : null,
-                                NetworkDifficulty = AuxNetworkDifficulty(auxBlock),
-                                Created = clock.Now,
-                            };
-
-                            _ = cf.RunTx(async (con, tx) => await auxBlockRepo.InsertAsync(con, tx, record))
-                                .ContinueWith(t => logger.Error(t.Exception, () => $"Failed to persist aux block {auxBlock.Hash} for {manager.Config.Name}"),
-                                    TaskContinuationOptions.OnlyOnFaulted);
-                        }
-                        catch(Exception ex)
-                        {
-                            logger.Error(ex, () => $"Failed to persist aux block {auxBlock.Hash} for {manager.Config.Name}");
-                        }
-                    }
-                }
-                catch(Exception ex)
-                {
-                    // Don't let aux submission failure affect the accepted primary share
-                    logger.Error(ex, () => $"Error submitting merged block to {manager.Config.Name}");
-                    submittedAuxHashes.TryRemove(dedupKey, out _);
-                }
-            }
-        }
+            auxSubmitQueue.Writer.TryWrite((share, job));
 
         // Refresh aux blocks on every share (rate-limited internally)
         // Use CancellationToken.None so a miner disconnect doesn't abort the refresh
@@ -679,6 +456,19 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
         if(auxPowManagers.Count > 0 || rskManager != null || hathorManager != null)
         {
             EnsureAuxPersistence();
+
+            // one awaited refresh (capped) so the first job already carries aux work, then background only
+            using(var initial = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                initial.CancelAfter(TimeSpan.FromSeconds(10));
+                var refreshers = auxPowManagers.Select(m => (Func<CancellationToken, Task>) m.RefreshAsync).ToList();
+                if(rskManager != null) refreshers.Add(rskManager.RefreshAsync);
+                if(hathorManager != null) refreshers.Add(hathorManager.RefreshAsync);
+                await Task.WhenAll(refreshers.Select(r => Guard(() => r(initial.Token), ex => logger.Warn(() => $"Initial aux refresh failed: {ex.Message}"))));
+            }
+
+            StartAuxRefreshLoop(ct);
+            _ = Task.Run(() => ProcessAuxSubmissionsAsync(ct), ct);
 
             Observable.Interval(TimeSpan.FromMinutes(1))
                 .Select(_ => Observable.FromAsync(() =>
@@ -878,6 +668,355 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
         {
             logger.Warn(() => $"[aux-confirm] [{config.Id}] Check failed: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Background worker for aux (merged mining) submissions. Each queued item carries the share
+    /// (its aux candidates are immutable) and the job it was found on. Runs for the pool's lifetime.
+    /// </summary>
+    private async Task ProcessAuxSubmissionsAsync(CancellationToken ct)
+    {
+        try
+        {
+            await foreach(var (share, job) in auxSubmitQueue.Reader.ReadAllAsync(ct))
+            {
+                try
+                {
+                    await SubmitAuxCandidatesAsync(share, job, ct);
+                }
+                catch(Exception ex)
+                {
+                    logger.Error(ex, () => "Error processing aux submissions");
+                }
+            }
+        }
+        catch(OperationCanceledException)
+        {
+            // shutdown
+        }
+    }
+
+    private async Task SubmitAuxCandidatesAsync(Share share, BitcoinJob job, CancellationToken ct)
+    {
+        var submittingJob = job;
+        foreach(var (auxBlock, headerBytes, coinbase, candidateBranch) in share.AuxCandidates)
+        {
+            // Claim the aux block before submitting so two shares that meet the same aux target in
+            // quick succession do not both submit it. The claim is released again below whenever the
+            // submit does not succeed (RPC error, rejection, exception). Before that release existed a
+            // single transient daemon failure made every later share for the same aux block skip as a
+            // "duplicate", and the block was lost for good.
+            var dedupKey = $"{auxBlock.ChainId}:{auxBlock.Hash}";
+            if(!submittedAuxHashes.TryAdd(dedupKey, 1))
+            {
+                logger.Debug(() => $"Skipping duplicate aux submission for {auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]}");
+                continue;
+            }
+
+            // RSK uses mnr_submitBitcoinBlock — route by chainId
+            if(rskManager != null && auxBlock.ChainId == rskManager.Config.ChainId)
+            {
+                try
+                {
+                    logger.Info(() => $"Submitting merged block to {rskManager.Config.Name}");
+
+                    var coinbaseTxHex = coinbase.ToHexString();
+                    var merkleBranch = candidateBranch ?? submittingJob?.MerkleBranchSteps ?? new List<byte[]>();
+                    var headerHex = headerBytes.ToHexString();
+
+                    logger.Info(() => $"RSK submit: hash={auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]}... coinbaseBranchLen={merkleBranch.Count}");
+                    var rskAccepted = await rskManager.SubmitBitcoinBlockAsync(
+                        auxBlock.Hash, headerHex, coinbaseTxHex, merkleBranch, ct);
+
+                    if(!rskAccepted)
+                        submittedAuxHashes.TryRemove(dedupKey, out _);
+
+                    if(rskAccepted)
+                    {
+                        try
+                        {
+                            EnsureAuxPersistence();
+
+                            // mnr_getWork returns blockHashForMergedMining, which is NOT the RSK block hash
+                            // (keccak256 of the header) stored on-chain. Right after acceptance the node has
+                            // usually not imported the block yet, so the real hash and height cannot be
+                            // resolved here. Record the merged-mining hash with BlockHeight = null and let
+                            // ConfirmRskBlocksAsync resolve both by matching hashForMergedMining on-chain.
+                            // Previously this stored eth_blockNumber (the current tip, not our block) as the
+                            // height; the confirmer then compared the tip's hash with our merged-mining hash,
+                            // found them different by construction, and marked every RSK block orphaned.
+                            string rskBlockHash = auxBlock.Hash;
+                            ulong? rskBlockHeight = null;
+
+                            var latestRes = await rskManager.Rpc.ExecuteAsync<JToken>(logger, "eth_getBlockByNumber", ct, new object[] { "latest", false });
+                            if(latestRes.Error == null && latestRes.Response?.Type == JTokenType.Object)
+                            {
+                                var resolved = MatchRskBlock(latestRes.Response, auxBlock.Hash);
+                                if(resolved != null)
+                                {
+                                    rskBlockHash = resolved.Value.Hash;
+                                    rskBlockHeight = (ulong) resolved.Value.Height;
+                                }
+                                else
+                                    logger.Debug(() => $"[rsk] Block {auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]}… not yet imported by the node; the confirmer will resolve its hash and height");
+                            }
+
+                            var record = new Persistence.Model.AuxBlock
+                            {
+                                PoolId = poolConfig.Id,
+                                ChainId = rskManager.Config.Id,
+                                ChainName = rskManager.Config.Name,
+                                BlockHeight = rskBlockHeight,
+                                AuxBlockHash = rskBlockHash,
+                                ParentBlockHash = share.BlockHash,
+                                Status = Persistence.Model.BlockStatus.Pending,
+                                ConfirmationProgress = 0,
+                                Miner = share.Miner,
+                                Worker = share.Worker,
+                                Source = clusterConfig.ClusterName,
+                                SubmittedVia = "live",
+                                Difficulty = share.HashDifficulty > 0 ? (double?)share.HashDifficulty : null,
+                                NetworkDifficulty = AuxNetworkDifficulty(auxBlock),
+                                Created = clock.Now,
+                            };
+
+                            _ = PersistAuxBlockAsync(record, "RSK block");
+                        }
+                        catch(Exception ex)
+                        {
+                            logger.Error(ex, () => $"Failed to persist RSK block {auxBlock.Hash}");
+                        }
+                    }
+                }
+                catch(Exception ex)
+                {
+                    logger.Error(ex, () => $"Error submitting RSK merged block: {ex.Message}");
+                    submittedAuxHashes.TryRemove(dedupKey, out _);
+                }
+
+                continue;
+            }
+
+            // Hathor uses its own submit protocol — route by chainId
+            if(hathorManager != null && auxBlock.ChainId == hathorManager.Config.ChainId)
+            {
+                try
+                {
+                    logger.Info(() => $"Submitting merged block to {hathorManager.Config.Name}");
+
+                    var merkleBranch = candidateBranch ?? submittingJob?.MerkleBranchSteps ?? new List<byte[]>();
+                    var (hathorAccepted, hathorBlockHash, hathorHeight) = await hathorManager.SubmitBlockAsync(
+                        auxBlock.Hash, headerBytes, coinbase, merkleBranch, ct);
+
+                    if(!hathorAccepted)
+                        submittedAuxHashes.TryRemove(dedupKey, out _);
+
+                    if(hathorAccepted)
+                    {
+                        try
+                        {
+                            EnsureAuxPersistence();
+
+                            var record = new Persistence.Model.AuxBlock
+                            {
+                                PoolId = poolConfig.Id,
+                                ChainId = hathorManager.Config.Id,
+                                ChainName = hathorManager.Config.Name,
+                                BlockHeight = hathorHeight > 0 ? (ulong?) hathorHeight : null,
+                                AuxBlockHash = hathorBlockHash,
+                                ParentBlockHash = share.BlockHash,
+                                Status = Persistence.Model.BlockStatus.Pending,
+                                ConfirmationProgress = 0,
+                                // Hathor uses 2 decimals: CoinbaseValue carries HTR cents
+                                Reward = auxBlock.CoinbaseValue > 0 ? (decimal) auxBlock.CoinbaseValue / 100m : null,
+                                Miner = share.Miner,
+                                Worker = share.Worker,
+                                Source = clusterConfig.ClusterName,
+                                SubmittedVia = "live",
+                                Difficulty = share.HashDifficulty > 0 ? (double?) share.HashDifficulty : null,
+                                NetworkDifficulty = AuxNetworkDifficulty(auxBlock),
+                                Created = clock.Now,
+                            };
+
+                            _ = PersistAuxBlockAsync(record, "Hathor block");
+                        }
+                        catch(Exception ex)
+                        {
+                            logger.Error(ex, () => $"Failed to persist Hathor block {auxBlock.Hash}");
+                        }
+                    }
+                }
+                catch(Exception ex)
+                {
+                    logger.Error(ex, () => $"Error submitting Hathor merged block: {ex.Message}");
+                    submittedAuxHashes.TryRemove(dedupKey, out _);
+                }
+
+                continue;
+            }
+
+            // Standard AuxPoW submission
+            var manager = auxPowManagers.FirstOrDefault(m => string.Equals(m.CurrentAuxBlock?.Hash, auxBlock.Hash, StringComparison.OrdinalIgnoreCase));
+            if(manager == null)
+            {
+                logger.Debug(() => $"No manager found for aux block {auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]} — block likely superseded");
+                submittedAuxHashes.TryRemove(dedupKey, out _);
+                continue;
+            }
+
+            try
+            {
+                logger.Info(() => "Submitting merged block to " + manager.Config.Name);
+
+                var coinbaseTxHex = coinbase.ToHexString();
+                var merkleBranch = candidateBranch ?? submittingJob?.MerkleBranchSteps ?? new List<byte[]>();
+                var (auxBranch, auxIndex) = AuxPowSerializer.GetAuxMerkleBranch(
+                    submittingJob?.AuxMerkleNodes,
+                    submittingJob?.AuxMerkleTreeSize ?? 1,
+                    submittingJob?.AuxMerkleTreeNonce ?? 0,
+                    auxBlock.ChainId);
+                var auxPoWHex = AuxPowSerializer.BuildAuxPoWHex(coinbaseTxHex, headerBytes, merkleBranch, auxBranch, auxIndex);
+
+                logger.Info(() => $"AuxPoW [{manager.Config.Id}] hash={auxBlock.Hash} treeSize={submittingJob?.AuxMerkleTreeSize} auxIndex={auxIndex} auxBranchLen={auxBranch.Count} coinbaseBranchLen={merkleBranch.Count} auxPoW={auxPoWHex}");
+                var auxAccepted = await manager.SubmitAuxBlockAsync(auxBlock.Hash, auxPoWHex, ct);
+
+                if(!auxAccepted)
+                    submittedAuxHashes.TryRemove(dedupKey, out _);
+
+                if(auxAccepted)
+                {
+                    try
+                    {
+                        EnsureAuxPersistence();
+
+                        var record = new Persistence.Model.AuxBlock
+                        {
+                            PoolId = poolConfig.Id,
+                            ChainId = manager.Config.Id,
+                            ChainName = manager.Config.Name,
+                            BlockHeight = auxBlock.Height > 0 ? (ulong?)auxBlock.Height : null,
+                            AuxBlockHash = auxBlock.Hash,
+                            ParentBlockHash = share.BlockHash,
+                            Status = Persistence.Model.BlockStatus.Pending,
+                            ConfirmationProgress = 0,
+                            Reward = auxBlock.CoinbaseValue > 0 ? (decimal)auxBlock.CoinbaseValue / 100_000_000m : null,
+                            Miner = share.Miner,
+                            Worker = share.Worker,
+                            Source = clusterConfig.ClusterName,
+                            SubmittedVia = "live",
+                            Difficulty = share.HashDifficulty > 0 ? (double?)share.HashDifficulty : null,
+                            NetworkDifficulty = AuxNetworkDifficulty(auxBlock),
+                            Created = clock.Now,
+                        };
+
+                        _ = PersistAuxBlockAsync(record, "aux block");
+                    }
+                    catch(Exception ex)
+                    {
+                        logger.Error(ex, () => $"Failed to persist aux block {auxBlock.Hash} for {manager.Config.Name}");
+                    }
+                }
+            }
+            catch(Exception ex)
+            {
+                // Don't let aux submission failure affect the accepted primary share
+                logger.Error(ex, () => $"Error submitting merged block to {manager.Config.Name}");
+                submittedAuxHashes.TryRemove(dedupKey, out _);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Persists an aux block record with retries. The daemon has already accepted the block, so losing
+    /// the record means a found block that is never confirmed or paid. The old fire-and-forget insert
+    /// gave up on the first error. After the retries the record goes to a recovery file next to the
+    /// share recovery file so an operator can insert it by hand.
+    /// </summary>
+    private async Task PersistAuxBlockAsync(Persistence.Model.AuxBlock record, string what)
+    {
+        var delays = new[] { 1, 2, 4, 8, 16, 32, 60, 60 };
+
+        for(var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                await cf.RunTx(async (con, tx) => await auxBlockRepo.InsertAsync(con, tx, record));
+
+                if(attempt > 0)
+                    logger.Info(() => $"Persisted {what} {record.AuxBlockHash} after {attempt} retries");
+
+                return;
+            }
+            catch(Exception ex)
+            {
+                if(attempt >= delays.Length)
+                {
+                    logger.Error(ex, () => $"Failed to persist {what} {record.AuxBlockHash} after {attempt} retries; writing it to {AuxBlockRecoveryFile}");
+                    await WriteAuxBlockRecoveryAsync(record);
+                    return;
+                }
+
+                logger.Warn(() => $"Failed to persist {what} {record.AuxBlockHash} ({ex.GetType().Name}: {ex.Message}); retry {attempt + 1}/{delays.Length} in {delays[attempt]}s");
+                await Task.Delay(TimeSpan.FromSeconds(delays[attempt]));
+            }
+        }
+    }
+
+    private string AuxBlockRecoveryFile
+    {
+        get
+        {
+            var shareFile = !string.IsNullOrEmpty(clusterConfig.ShareRecoveryFile) ? clusterConfig.ShareRecoveryFile : "recovered-shares.txt";
+            return Path.Combine(Path.GetDirectoryName(Path.GetFullPath(shareFile)) ?? ".", "recovered-aux-blocks.jsonl");
+        }
+    }
+
+    private static readonly SemaphoreSlim auxRecoveryFileLock = new(1, 1);
+
+    private async Task WriteAuxBlockRecoveryAsync(Persistence.Model.AuxBlock record)
+    {
+        try
+        {
+            await auxRecoveryFileLock.WaitAsync();
+
+            try
+            {
+                await File.AppendAllTextAsync(AuxBlockRecoveryFile, JsonConvert.SerializeObject(record) + Environment.NewLine);
+            }
+            finally
+            {
+                auxRecoveryFileLock.Release();
+            }
+        }
+        catch(Exception ex)
+        {
+            logger.Fatal(ex, () => $"Could not write the aux block recovery file; aux block {record.AuxBlockHash} ({record.ChainId}) is lost");
+        }
+    }
+
+    /// <summary>
+    /// Refreshes aux work on a 1 s tick. Each manager's RefreshAsync is self rate-limited to its
+    /// PollIntervalSeconds (and re-armed by ZMQ notifications and submits), so the tick itself is
+    /// nearly free; its purpose is to keep aux RPC latency out of UpdateJob entirely.
+    /// </summary>
+    private void StartAuxRefreshLoop(CancellationToken ct)
+    {
+        var refreshers = new List<Func<CancellationToken, Task>>();
+        refreshers.AddRange(auxPowManagers.Select(m => (Func<CancellationToken, Task>) m.RefreshAsync));
+        if(rskManager != null)
+            refreshers.Add(rskManager.RefreshAsync);
+        if(hathorManager != null)
+            refreshers.Add(hathorManager.RefreshAsync);
+
+        if(refreshers.Count == 0)
+            return;
+
+        auxRefreshSubscription = Observable.Interval(TimeSpan.FromSeconds(1))
+            .Select(_ => Observable.FromAsync(() => Task.WhenAll(refreshers.Select(r => Guard(() => r(ct), ex => logger.Debug(ex))))))
+            .Concat()
+            .Subscribe(_ => { }, ex => logger.Error(ex, () => "Aux refresh loop terminated"));
+
+        ct.Register(() => auxRefreshSubscription?.Dispose());
     }
 
     #region RSK confirmation
