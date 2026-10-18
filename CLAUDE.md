@@ -94,6 +94,7 @@ Supported families: Alephium, Beam, Bitcoin, Conceal, Cryptonote, Equihash, Ergo
 | Async event bus | `System.Reactive` (Rx) — `MessageBus` for pool status, block found, share events |
 | Config validation | `FluentValidation` — validators in each `Blockchain/<Family>/` folder |
 | ORM / DB | Dapper with repository pattern under `Persistence/Postgres/Repositories/` |
+| Object mapping | Mapperly, compile-time generated, in `Mapping/MiningcoreMapper.cs` (typed `ToEntity` / `ToModel` / `ToResponse` methods). Replaced AutoMapper in Oct 2026: see `docs/decisions.md` |
 | Logging | NLog — per-pool scoped loggers, configurable to per-pool log files |
 | Metrics | Prometheus on `/metrics` endpoint |
 | Native hashing | `libmultihash` and `libcryptonight` compiled as native libraries, P/Invoked from `Crypto/` |
@@ -118,6 +119,10 @@ This fork adds two columns requiring migrations:
 ### VarDiff
 
 `VarDiff/VarDiffManager.cs` implements adaptive difficulty using a circular buffer of the last 10 share timestamps per connection.
+
+### Decision log
+
+Non-obvious choices (framework version, dependency swaps, CI gate, merged-mining fixes) are recorded with their reasons in `docs/decisions.md`. Add an entry when making a change a future reader would ask "why" about.
 
 ### Configuration
 
