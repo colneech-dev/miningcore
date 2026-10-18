@@ -75,6 +75,14 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
         return diff1;
     }
 
+    private static decimal Pow10(int exponent)
+    {
+        var result = 1m;
+        for(var i = 0; i < Math.Clamp(exponent, 0, 28); i++)
+            result *= 10m;
+        return result;
+    }
+
     private static double? AuxNetworkDifficulty(AuxBlockData auxBlock, BigInteger diff1) =>
         DifficultyUnits.TargetDifficulty(auxBlock?.TargetValue, diff1);
 
@@ -203,6 +211,10 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                     (job.BlockTemplate?.PreviousBlockhash != blockTemplate.PreviousBlockhash ||
                         blockTemplate.Height > job.BlockTemplate?.Height));
 
+            // an aux-only change rebuilds and rebroadcasts the job (fresh coinbase commitment) but is not
+            // a new primary block: it must not log "Detected new block" or touch LastNetworkBlockTime
+            var auxChanged = false;
+
             if(isNew)
                 messageBus.NotifyChainHeight(poolConfig.Id, blockTemplate.Height, poolConfig.Template);
 
@@ -227,7 +239,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                     var newHashes = currentAuxBlocks.Select(b => b.Hash)
                         .ToHashSet(StringComparer.OrdinalIgnoreCase);
                     if(!prevHashes.SetEquals(newHashes))
-                        isNew = true;
+                        auxChanged = true;
                 }
             }
 
@@ -239,7 +251,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
 
                 if(!isNew && !forceUpdate && job?.RskAuxBlock?.Hash != null &&
                    !string.Equals(job.RskAuxBlock.Hash, currentRskAuxBlock?.Hash, StringComparison.OrdinalIgnoreCase))
-                    isNew = true;
+                    auxChanged = true;
             }
 
             // Hathor work (cached by the background loop) and change detection
@@ -250,10 +262,10 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
 
                 if(!isNew && !forceUpdate && job?.HathorAuxBlock?.Hash != null &&
                    !string.Equals(job.HathorAuxBlock.Hash, currentHathorAuxBlock?.Hash, StringComparison.OrdinalIgnoreCase))
-                    isNew = true;
+                    auxChanged = true;
             }
 
-            if(isNew || forceUpdate)
+            if(isNew || forceUpdate || auxChanged)
             {
                 job = CreateJob();
 
@@ -265,8 +277,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                     currentRskAuxBlock,
                     currentHathorAuxBlock);
 
-                if(isNew || forceUpdate)
-                    submittedAuxHashes.Clear();
+                submittedAuxHashes.Clear();   // new job id: aux claims belonged to the previous job
 
                 if(isNew)
                 {
@@ -290,7 +301,9 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
 
                 else
                 {
-                    if(via != null)
+                    if(auxChanged)
+                        logger.Debug(() => $"Aux work changed at height {blockTemplate?.Height}, rebroadcasting job");
+                    else if(via != null)
                         logger.Debug(() => $"Template update {blockTemplate?.Height} [{via}]");
                     else
                         logger.Debug(() => $"Template update {blockTemplate?.Height}");
@@ -302,7 +315,8 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                 currentJob = job;
             }
 
-            return (isNew, forceUpdate);
+            // Force (not IsNew) carries the aux change: the job is rebroadcast with clean_jobs = false
+            return (isNew, forceUpdate || auxChanged);
         }
 
         catch(OperationCanceledException)
@@ -645,7 +659,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                         block.Status = Persistence.Model.BlockStatus.Orphaned;
                         block.ConfirmationProgress = 0;
                         await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
-                        logger.Info(() => $"[aux-confirm] [{config.Id}] Block {block.AuxBlockHash[..8]}… never appeared on-chain — orphaned");
+                        logger.Info(() => $"[aux-confirm] [{config.Id}] Block {block.AuxBlockHash[..Math.Min(8, block.AuxBlockHash.Length)]}… never appeared on-chain — orphaned");
                     }
                     continue;
                 }
@@ -655,7 +669,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                     block.Status = Persistence.Model.BlockStatus.Orphaned;
                     block.ConfirmationProgress = 0;
                     await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
-                    logger.Info(() => $"[aux-confirm] [{config.Id}] Block {block.AuxBlockHash[..8]}… voided — orphaned");
+                    logger.Info(() => $"[aux-confirm] [{config.Id}] Block {block.AuxBlockHash[..Math.Min(8, block.AuxBlockHash.Length)]}… voided — orphaned");
                     continue;
                 }
 
@@ -670,7 +684,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                 {
                     block.Status = Persistence.Model.BlockStatus.Confirmed;
                     block.ConfirmationProgress = 1;
-                    logger.Info(() => $"[aux-confirm] [{config.Id}] Block {block.AuxBlockHash[..8]}… confirmed at height {blockHeight}");
+                    logger.Info(() => $"[aux-confirm] [{config.Id}] Block {block.AuxBlockHash[..Math.Min(8, block.AuxBlockHash.Length)]}… confirmed at height {blockHeight}");
                 }
                 else
                 {
@@ -915,7 +929,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                             ParentBlockHash = share.BlockHash,
                             Status = Persistence.Model.BlockStatus.Pending,
                             ConfirmationProgress = 0,
-                            Reward = auxBlock.CoinbaseValue > 0 ? (decimal)auxBlock.CoinbaseValue / 100_000_000m : null,
+                            Reward = auxBlock.CoinbaseValue > 0 ? (decimal) auxBlock.CoinbaseValue / Pow10(manager.Config.Decimals) : null,
                             Miner = share.Miner,
                             Worker = share.Worker,
                             Source = clusterConfig.ClusterName,

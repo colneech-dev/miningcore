@@ -50,6 +50,10 @@ public class AuxChainConfig
     /// <summary>Confirmations required before an aux block is marked confirmed. Defaults to 100.</summary>
     public int RequiredConfirmations { get; set; } = 100;
 
+    /// <summary>Decimal places of the aux coin, used to turn the coinbase value into the recorded
+    /// reward. Defaults to 8 (satoshi-style); set it for chains with a different precision.</summary>
+    public int Decimals { get; set; } = 8;
+
     /// <summary>Difficulty-1 target of the aux chain as hex, for chains whose difficulty is not measured
     /// against Bitcoin's 0x00000000ffff0000... target. Leave unset for every Bitcoin-derived chain.
     /// Used only to express the recorded hash and network difficulty in the aux chain's own units.</summary>
