@@ -14,6 +14,7 @@ public interface IAuxBlockRepository
     Task<AuxBlock[]> GetRecentlyConfirmedAsync(IDbConnection con, string poolId, string chainId, TimeSpan window, int limit, CancellationToken ct);
     Task UpdateAsync(IDbConnection con, IDbTransaction tx, AuxBlock block);
     Task<int> GetPoolAuxBlockCountAsync(IDbConnection con, string poolId, CancellationToken ct);
+    Task<Model.Projections.AuxChainSummary[]> GetChainSummariesAsync(IDbConnection con, string poolId, DateTime since, CancellationToken ct);
     Task<int> GetPoolAuxBlockCountSinceAsync(IDbConnection con, string poolId, DateTime since, CancellationToken ct);
     Task<DateTime?> GetLastPoolAuxBlockTimeAsync(IDbConnection con, string poolId, CancellationToken ct);
 }

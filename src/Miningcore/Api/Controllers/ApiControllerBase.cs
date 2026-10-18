@@ -20,6 +20,14 @@ public abstract class ApiControllerBase : ControllerBase
     protected readonly IConnectionFactory cf;
     protected readonly MiningcoreMapper mapper;
 
+    /// <summary>
+    /// Upper bound for the pageSize query parameter. It used to flow straight into FETCH NEXT, so
+    /// any client could ask for millions of rows and hold a connection and a worker.
+    /// </summary>
+    public const int MaxPageSize = 500;
+
+    protected static int ClampPageSize(int pageSize) => Math.Clamp(pageSize, 1, MaxPageSize);
+
     protected PoolConfig GetPoolNoThrow(string poolId)
     {
         if(string.IsNullOrEmpty(poolId))

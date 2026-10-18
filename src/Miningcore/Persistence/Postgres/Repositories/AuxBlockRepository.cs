@@ -138,6 +138,17 @@ public class AuxBlockRepository : IAuxBlockRepository
         return con.ExecuteScalarAsync<int>(new CommandDefinition(query, new { poolId }, cancellationToken: ct));
     }
 
+    public async Task<Model.Projections.AuxChainSummary[]> GetChainSummariesAsync(IDbConnection con, string poolId, DateTime since, CancellationToken ct)
+    {
+        const string query = @"SELECT c.chainid, c.total, c.today, c.lastcreated, r.reward AS lastreward
+            FROM (SELECT chainid, COUNT(*) AS total, COUNT(*) FILTER (WHERE created >= @since) AS today, MAX(created) AS lastcreated
+                  FROM auxblocks WHERE poolid = @poolId GROUP BY chainid) c
+            LEFT JOIN LATERAL (SELECT reward FROM auxblocks WHERE poolid = @poolId AND chainid = c.chainid AND reward IS NOT NULL
+                  ORDER BY created DESC LIMIT 1) r ON true";
+
+        return (await con.QueryAsync<Model.Projections.AuxChainSummary>(new CommandDefinition(query, new { poolId, since }, cancellationToken: ct))).ToArray();
+    }
+
     public Task<int> GetPoolAuxBlockCountSinceAsync(IDbConnection con, string poolId, DateTime since, CancellationToken ct)
     {
         const string query = @"SELECT COUNT(*) FROM auxblocks WHERE poolid = @poolId AND created >= @since";

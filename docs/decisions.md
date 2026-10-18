@@ -136,3 +136,52 @@ accept either hash so legacy rows are upgraded instead of orphaned.
 height, so the confirmer compared the tip's hash with our merged-mining hash, found them
 different by construction, and orphaned every RSK block. The height-heal path never ran
 because the height was not null.
+
+## 2026-10-18 — Aux refresh, aux submits and aux persistence leave the hot paths
+
+**Decision.** `UpdateJob` no longer awaits the aux, RSK or Hathor `RefreshAsync`; a 1 s background
+tick (`StartAuxRefreshLoop`) refreshes them and `UpdateJob` reads the cache. Aux submissions are
+queued to a single background worker (`ProcessAuxSubmissionsAsync`) instead of running inside
+`SubmitShareAsync`. Aux block records are persisted with retries (1 s to 60 s backoff, eight
+attempts) and, if that fails, appended to `recovered-aux-blocks.jsonl` next to the share recovery
+file.
+
+**Why.** `RpcClient` has a fixed 30 s timeout. With the refresh awaited in `UpdateJob`, one hung
+aux daemon delayed every Bitcoin job by up to 30 s per chain, during which miners worked on a
+stale template. With the submits inline, the same hang stalled the submitting miner's
+`mining.submit`. The fire-and-forget insert gave up on the first database error, losing a block
+the daemon had already accepted. Each manager's `RefreshAsync` is already rate-limited to its
+poll interval and re-armed by ZMQ and submits, so the 1 s tick costs nothing between polls.
+
+## 2026-10-18 — Pool effort uses the same units as block and miner effort
+
+**Decision.** `GetEffortBetweenCreatedAsync` is `SUM(difficulty / networkdifficulty)` and no
+longer takes a share multiplier.
+
+**Why.** `shares.difficulty` is stored normalised (`stratumDifficulty / shareMultiplier`) and
+`networkdifficulty` is in daemon units, which is exactly what block effort and miner effort
+divide. Multiplying by the multiplier again made `poolEffort` 65536x too high on scrypt pools,
+and the web UI had to read `coins.json` from a bind mount to divide it back out. The API is the
+one place that knows the units, so it owns the fix; the UI workaround is removed in the same
+release. Deploy both sides together: the old UI with the new API shows effort 65536x too low on
+scrypt pools, and the reverse too high.
+
+## 2026-10-18 — pageSize is clamped to 500; /summary carries per-chain aux counts
+
+**Decision.** Every paging action clamps `pageSize` to `[1, 500]` (`ApiControllerBase.MaxPageSize`).
+`SummaryMergeMineEntry` gains `totalBlocks`, `blocksToday`, `lastBlockTime` and `lastReward`,
+computed in one grouped query, and the Hathor chain is now listed.
+
+**Why.** `pageSize` flowed straight into `FETCH NEXT`, so any client could request millions of
+rows. The UI asked for 2000 aux blocks twice a minute only to count them per chain; with counts in
+`/summary` it asks for nothing and the numbers are right even when a pool has more aux blocks
+than one page. Hathor was the only merged chain missing from the list.
+
+## 2026-10-18 — Payout result collections are locked
+
+**Decision.** `BitcoinPayoutHandler`, `HandshakePayoutHandler` and `WarthogPayoutHandler` take a
+lock around `successBalances.Add` and `txFailures.Add` inside `Parallel.ForEachAsync`.
+
+**Why.** `Dictionary` and `List` are not safe for concurrent writes; with eight parallel sends a
+corrupted collection either throws (payment sent, nothing persisted) or silently drops an entry
+(payment sent, balance not debited, paid again next run).

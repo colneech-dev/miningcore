@@ -102,7 +102,7 @@ public class PoolApiController : ApiControllerBase
                 if(lastBlockTime.HasValue && pool != null)
                 {
                     var startTime = lastBlockTime.Value;
-                    var poolEffort = await cf.Run(con => shareRepo.GetEffortBetweenCreatedAsync(con, config.Id, pool.ShareMultiplier, startTime, clock.Now, ct));
+                    var poolEffort = await cf.Run(con => shareRepo.GetEffortBetweenCreatedAsync(con, config.Id, startTime, clock.Now, ct));
                     if(poolEffort.HasValue)
                         result.PoolEffort = poolEffort.Value;
                 }
@@ -191,7 +191,7 @@ public class PoolApiController : ApiControllerBase
         if(lastBlockTime.HasValue && poolInstance != null)
         {
             var startTime = lastBlockTime.Value;
-            var poolEffort = await cf.Run(con => shareRepo.GetEffortBetweenCreatedAsync(con, pool.Id, poolInstance.ShareMultiplier, startTime, clock.Now, ct));
+            var poolEffort = await cf.Run(con => shareRepo.GetEffortBetweenCreatedAsync(con, pool.Id, startTime, clock.Now, ct));
             if(poolEffort.HasValue)
                 response.Pool.PoolEffort = poolEffort.Value;
         }
@@ -245,6 +245,7 @@ public class PoolApiController : ApiControllerBase
     public async Task<MinerPerformanceStats[]> PagePoolMinersAsync(
         string poolId, [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] uint topMinersRange = 24)
     {
+        pageSize = ClampPageSize(pageSize);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -263,6 +264,7 @@ public class PoolApiController : ApiControllerBase
     public async Task<Responses.Block[]> PagePoolBlocksAsync(
         string poolId, [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
     {
+        pageSize = ClampPageSize(pageSize);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -301,6 +303,7 @@ public class PoolApiController : ApiControllerBase
     public async Task<PagedResultResponse<Responses.Block[]>> PagePoolBlocksV2Async(
         string poolId, [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
     {
+        pageSize = ClampPageSize(pageSize);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -343,6 +346,7 @@ public class PoolApiController : ApiControllerBase
     public async Task<Responses.Payment[]> PagePoolPaymentsAsync(
         string poolId, [FromQuery] int page, [FromQuery] int pageSize = 15)
     {
+        pageSize = ClampPageSize(pageSize);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -373,6 +377,7 @@ public class PoolApiController : ApiControllerBase
     public async Task<PagedResultResponse<Responses.Payment[]>> PagePoolPaymentsV2Async(
         string poolId, [FromQuery] int page, [FromQuery] int pageSize = 15)
     {
+        pageSize = ClampPageSize(pageSize);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -466,6 +471,7 @@ public class PoolApiController : ApiControllerBase
     public async Task<Responses.Block[]> PageMinerBlocksAsync(
         string poolId, string address, [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
     {
+        pageSize = ClampPageSize(pageSize);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -510,6 +516,7 @@ public class PoolApiController : ApiControllerBase
     public async Task<PagedResultResponse<Responses.Block[]>> PageMinerBlocksV2Async(
         string poolId, string address, [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
     {
+        pageSize = ClampPageSize(pageSize);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -558,6 +565,7 @@ public class PoolApiController : ApiControllerBase
     public async Task<Responses.Payment[]> PageMinerPaymentsAsync(
         string poolId, string address, [FromQuery] int page, [FromQuery] int pageSize = 15)
     {
+        pageSize = ClampPageSize(pageSize);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -594,6 +602,7 @@ public class PoolApiController : ApiControllerBase
     public async Task<PagedResultResponse<Responses.Payment[]>> PageMinerPaymentsV2Async(
         string poolId, string address, [FromQuery] int page, [FromQuery] int pageSize = 15)
     {
+        pageSize = ClampPageSize(pageSize);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -634,6 +643,7 @@ public class PoolApiController : ApiControllerBase
     public async Task<Responses.BalanceChange[]> PageMinerBalanceChangesAsync(
         string poolId, string address, [FromQuery] int page, [FromQuery] int pageSize = 15)
     {
+        pageSize = ClampPageSize(pageSize);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -655,6 +665,7 @@ public class PoolApiController : ApiControllerBase
     public async Task<PagedResultResponse<Responses.BalanceChange[]>> PageMinerBalanceChangesV2Async(
         string poolId, string address, [FromQuery] int page, [FromQuery] int pageSize = 15)
     {
+        pageSize = ClampPageSize(pageSize);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -680,6 +691,7 @@ public class PoolApiController : ApiControllerBase
     public async Task<AmountByDate[]> PageMinerEarningsByDayAsync(
         string poolId, string address, [FromQuery] int page, [FromQuery] int pageSize = 15)
     {
+        pageSize = ClampPageSize(pageSize);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -700,6 +712,7 @@ public class PoolApiController : ApiControllerBase
     public async Task<PagedResultResponse<AmountByDate[]>> PageMinerEarningsByDayV2Async(
         string poolId, string address, [FromQuery] int page, [FromQuery] int pageSize = 15)
     {
+        pageSize = ClampPageSize(pageSize);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -862,6 +875,7 @@ public class PoolApiController : ApiControllerBase
     public async Task<Responses.AuxBlock[]> PagePoolAuxBlocksAsync(
         string poolId, [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
     {
+        pageSize = ClampPageSize(pageSize);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -881,6 +895,7 @@ public class PoolApiController : ApiControllerBase
     public async Task<Responses.AuxBlock[]> PageMinerAuxBlocksAsync(
         string poolId, string address, [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
     {
+        pageSize = ClampPageSize(pageSize);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -923,7 +938,7 @@ public class PoolApiController : ApiControllerBase
             double? poolEffort = null;
             if(lastBlockTime.HasValue && poolInstance != null)
             {
-                var effort = await cf.Run(con => shareRepo.GetEffortBetweenCreatedAsync(con, config.Id, poolInstance.ShareMultiplier, lastBlockTime.Value, clock.Now, ct));
+                var effort = await cf.Run(con => shareRepo.GetEffortBetweenCreatedAsync(con, config.Id, lastBlockTime.Value, clock.Now, ct));
                 if(effort.HasValue)
                     poolEffort = effort.Value;
             }
@@ -935,8 +950,25 @@ public class PoolApiController : ApiControllerBase
                 entries.AddRange(bitcoinExtra.AuxChains.Select(a => new SummaryMergeMineEntry { Id = a.Id, Name = a.Name ?? a.Id }));
             if(bitcoinExtra?.RskChain != null)
                 entries.Add(new SummaryMergeMineEntry { Id = bitcoinExtra.RskChain.Id, Name = bitcoinExtra.RskChain.Name ?? bitcoinExtra.RskChain.Id });
+            if(bitcoinExtra?.HathorChain != null)
+                entries.Add(new SummaryMergeMineEntry { Id = bitcoinExtra.HathorChain.Id, Name = bitcoinExtra.HathorChain.Name ?? bitcoinExtra.HathorChain.Id });
             if(entries.Count > 0)
+            {
+                // Per-chain counts in one query, so the UI's merge-mining page no longer has to pull
+                // thousands of aux block rows every minute just to count them per chain.
+                var chainStats = await cf.Run(con => auxBlocksRepo.GetChainSummariesAsync(con, config.Id, todayUtc, ct));
+                foreach(var entry in entries)
+                {
+                    var cs = chainStats.FirstOrDefault(x => string.Equals(x.ChainId, entry.Id, StringComparison.OrdinalIgnoreCase));
+                    if(cs == null)
+                        continue;
+                    entry.TotalBlocks = cs.Total;
+                    entry.BlocksToday = cs.Today;
+                    entry.LastBlockTime = cs.LastCreated;
+                    entry.LastReward = cs.LastReward;
+                }
                 mergeMinedCoins = entries.ToArray();
+            }
 
             var auxBlocksToday = mergeMinedCoins != null
                 ? await cf.Run(con => auxBlocksRepo.GetPoolAuxBlockCountSinceAsync(con, config.Id, todayUtc, ct))
