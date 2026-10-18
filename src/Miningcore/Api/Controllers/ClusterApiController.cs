@@ -145,7 +145,10 @@ public class ClusterApiController : ApiControllerBase
                             var nbTarget = new global::NBitcoin.Target(block.Bits.HexToByteArray());
                             stat.NetworkDifficulty = nbTarget.Difficulty;
                         }
-                        catch { }
+                        catch(Exception ex)
+                        {
+                            logger.Debug(ex);   // best-effort enrichment; the response is still served without it
+                        }
                     }
                 }
             }

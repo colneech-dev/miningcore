@@ -1247,7 +1247,7 @@ public class BitcoinJob
                 founderParameters.FounderReward = frJToken.ToObject<FounderRewardEntry>();
             }
 
-            logger.Info(() => $"HasFounderFee: founderParameters={founderParameters != null}, " +
+            logger.Debug(() => $"HasFounderFee: founderParameters={founderParameters != null}, " +
                 $"Founder={founderParameters?.Founder?.Type}, " +
                 $"FounderReward={founderParameters?.FounderReward != null}, " +
                 $"Payee={founderParameters?.FounderReward?.Founderpayee}, " +

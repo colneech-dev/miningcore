@@ -519,8 +519,15 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
         return client;
     }
 
+    // the deep-reorg re-check of recently confirmed blocks costs up to 50 getblockhash calls per chain
+    // and a reorg deep enough to matter is rare, so it runs on every 10th confirmation tick
+    private int confirmTick;
+    private bool deepReorgDue;
+
     private async Task ConfirmAuxBlocksAsync(CancellationToken ct)
     {
+        deepReorgDue = ++confirmTick % 10 == 1;
+
         foreach(var manager in auxPowManagers)
         {
             var config = manager.Config;
@@ -573,6 +580,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                         continue;
                     }
 
+                    var previousProgress = block.ConfirmationProgress;
                     var progress = Math.Min(1.0, (double) confirmations / config.RequiredConfirmations);
 
                     if(progress >= 1.0)
@@ -586,7 +594,9 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                         block.ConfirmationProgress = progress;
                     }
 
-                    await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
+                    // one UPDATE per pending block per minute added up; only write when something changed
+                    if(block.Status == BlockStatus.Confirmed || block.ConfirmationProgress != previousProgress)
+                        await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
                 }
 
                 // Heal backfill blocks that are missing blockHeight
@@ -602,7 +612,9 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                 }
 
                 // Deep reorg check: re-verify recently confirmed blocks in case of chain reorg
-                var recentConfirmed = await cf.Run(con => auxBlockRepo.GetRecentlyConfirmedAsync(con, poolConfig.Id, config.Id, TimeSpan.FromHours(24), 50, ct));
+                var recentConfirmed = deepReorgDue
+                    ? await cf.Run(con => auxBlockRepo.GetRecentlyConfirmedAsync(con, poolConfig.Id, config.Id, TimeSpan.FromHours(24), 50, ct))
+                    : Array.Empty<Persistence.Model.AuxBlock>();
                 foreach(var block in recentConfirmed)
                 {
                     var blockHeight = (long)block.BlockHeight!.Value;
@@ -678,6 +690,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
 
                 var blockHeight = (long) (block.BlockHeight ?? (ulong) height);
                 var confirmations = tipHeight - blockHeight;
+                var previousProgress = block.ConfirmationProgress;
                 var progress = Math.Min(1.0, (double) confirmations / config.RequiredConfirmations);
 
                 if(progress >= 1.0)
@@ -691,7 +704,9 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                     block.ConfirmationProgress = progress;
                 }
 
-                await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
+                // one UPDATE per pending block per minute added up; only write when something changed
+                if(block.Status == BlockStatus.Confirmed || block.ConfirmationProgress != previousProgress)
+                    await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
             }
         }
         catch(Exception ex)
@@ -1272,6 +1287,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                         block.AuxBlockHash = realHash;
                 }
 
+                var previousProgress = block.ConfirmationProgress;
                 var progress = Math.Min(1.0, (double) confirmations / rskConfig.RequiredConfirmations);
                 if(progress >= 1.0)
                 {
@@ -1282,11 +1298,15 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                 else
                     block.ConfirmationProgress = progress;
 
-                await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
+                // one UPDATE per pending block per minute added up; only write when something changed
+                if(block.Status == BlockStatus.Confirmed || block.ConfirmationProgress != previousProgress)
+                    await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
             }
 
             // 3. Deep reorg check on recently confirmed blocks
-            var recentConfirmed = await cf.Run(con => auxBlockRepo.GetRecentlyConfirmedAsync(con, poolConfig.Id, rskConfig.Id, TimeSpan.FromHours(24), 50, ct));
+            var recentConfirmed = deepReorgDue
+                ? await cf.Run(con => auxBlockRepo.GetRecentlyConfirmedAsync(con, poolConfig.Id, rskConfig.Id, TimeSpan.FromHours(24), 50, ct))
+                : Array.Empty<Persistence.Model.AuxBlock>();
 
             foreach(var block in recentConfirmed)
             {

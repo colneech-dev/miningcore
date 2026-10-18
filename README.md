@@ -18,6 +18,8 @@ This fork adds the following changes on top of upstream:
 - **Daemon options** — `allowInsecureTls` (accept self-signed certificates; off by default since Oct 2026, previously every daemon connection accepted any certificate) and `requestTimeoutSeconds` (per-request RPC timeout, default 30) on any daemon endpoint
 - **API options** — `corsOrigins` restricts cross-origin browser reads to the listed origins; cross-origin requests are GET/HEAD only. Admin endpoints that change state (`logging/level`, `payment/processing/*`) take POST
 - **Aux chain options** — `decimals` (default 8) and `diff1` per `auxChains[]` entry
+- **Merged mining example** — `examples/digibyte_sha256_merged_pool.json` covers `auxChains`, `rskChain` and `hathorChain`
+- **Tests without native libraries** — `dotnet test` skips the hashing tests that need `libcryptonight`, `libcryptonote`, `librandomx` or `librandomarq` when they are not built, with the reason in the output
 - All stored difficulties are in daemon units (no stratum share multiplier); see `docs/decisions.md`. Pools with a share multiplier other than 1 that recorded blocks before Oct 2026 should run `src/Miningcore/Persistence/Postgres/Scripts/backfill_difficulty_units.sh <config.json> <coins.json> | psql -d miningcore` once
 
 ---

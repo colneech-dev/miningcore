@@ -266,3 +266,33 @@ that report `target` in the wrong byte order, recording a wrong network difficul
 **Why.** Each is a finding from the Oct 2026 negative review (`docs` of the session); none changes
 behaviour for a correctly configured pool except the CORS method restriction and the admin
 endpoints' verb, both of which only affect clients that were mutating state through a browser.
+
+## 2026-10-18 — Hygiene batch
+
+**Decision.**
+- Per-job and per-connection diagnostics (founder-fee parameters, `mining.configure` details,
+  version-rolling mask) log at Debug.
+- `StatsRecorder` resets a pool's performance stats once per tick; the second, overlapping reset
+  block is gone.
+- `PoolApiController` no longer re-deserialises `payoutSchemeConfig`; the mapper already does.
+- Native hashing contexts use `DateTime.UtcNow`.
+- The payout retry log prints the retry number instead of the literal `{1}`.
+- The one silent `catch { }` (cluster API enrichment) logs at Debug. The review's "57 empty catch
+  blocks" was an overcount: 23 are `catch(OperationCanceledException)` on shutdown paths and
+  the rest carry a comment explaining the fall-through.
+- Aux confirmers write a row only when its status or progress changed, and run the deep-reorg
+  re-check on every tenth tick.
+- `AuxChainConfig.PollIntervalSeconds` keeps its default of 10 (RSK and Hathor use 5) and the
+  comment now says why: aux chains are also invalidated by ZMQ and after each submit.
+- `examples/digibyte_sha256_merged_pool.json` shows every merged-mining option.
+- Tests that need a native library are marked `[NativeLibFact("lib...")]` and skip with a reason
+  when it cannot be loaded, instead of failing with `DllNotFoundException`.
+
+**Why.** Log volume was dominated by two per-connection lines; the duplicate reset masked which
+path was needed; the hand mapping drifted from the mapper; local time breaks timing across a
+DST change. The native-test change makes a plain `dotnet test` meaningful on a machine without
+`build-libs-linux.sh` output: before, 36 red tests hid any real failure.
+
+**Not done.** The 37 `#pragma warning disable` directives (mostly CS4014, CS1591, CS3021,
+CS0612) are left; removing them needs the underlying warnings fixed one by one. The RVH/ANOK
+witness-commitment question needs those coins' consensus rules to settle.

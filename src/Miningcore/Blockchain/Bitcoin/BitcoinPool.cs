@@ -332,7 +332,7 @@ public class BitcoinPool : PoolBase, IAuxMiningPool
         var result = new Dictionary<string, object>();
 
         var extra = poolConfig.Extra.SafeExtensionDataAs<Configuration.BitcoinPoolConfigExtra>();
-        logger.Info(() => $"[{connection.ConnectionId}] OnConfigure: extra={extra != null}, EnableVersionRolling={extra?.EnableVersionRolling}, Extra keys=[{string.Join(",", poolConfig.Extra?.Keys ?? Enumerable.Empty<string>())}]");
+        logger.Debug(() => $"[{connection.ConnectionId}] OnConfigure: extra={extra != null}, EnableVersionRolling={extra?.EnableVersionRolling}, Extra keys=[{string.Join(",", poolConfig.Extra?.Keys ?? Enumerable.Empty<string>())}]");
 
         if(extensions != null)
         {
@@ -388,7 +388,7 @@ public class BitcoinPool : PoolBase, IAuxMiningPool
         result[BitcoinStratumExtensions.VersionRolling] = true;
         result[BitcoinStratumExtensions.VersionRollingMask] = context.VersionRollingMask.Value.ToStringHex8();
 
-        logger.Info(() => $"[{connection.ConnectionId}] Using version-rolling mask {result[BitcoinStratumExtensions.VersionRollingMask]}");
+        logger.Debug(() => $"[{connection.ConnectionId}] Using version-rolling mask {result[BitcoinStratumExtensions.VersionRollingMask]}");
     }
 
     private void ConfigureMinimumDiff(StratumConnection connection, BitcoinWorkerContext context,

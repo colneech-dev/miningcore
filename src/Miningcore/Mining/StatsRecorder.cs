@@ -158,20 +158,8 @@ public class StatsRecorder : BackgroundService
 
                 messageBus.NotifyHashrateUpdated(pool.Config.Id, 0);
 
-                logger.Info(() => $"[{poolId}] Reset performance stats for pool");
-            }
-
-            // reset on inactivity timeout
-            if (!hasRecentShares && result.Length > 0)
-            {
-                pool.PoolStats.ConnectedMiners = 0;
-                pool.PoolStats.ConnectedWorkers = 0;
-                pool.PoolStats.PoolHashrate = 0;
-                pool.PoolStats.SharesPerSecond = 0;
-
-                messageBus.NotifyHashrateUpdated(pool.Config.Id, 0);
-
-                logger.Info(() => $"[{poolId}] Reset performance stats for pool (inactivity timeout)");
+                // result.Length > 0 here means shares exist but the newest is older than the inactivity timeout
+                logger.Info(() => $"[{poolId}] Reset performance stats for pool{(result.Length > 0 ? " (inactivity timeout)" : "")}");
             }
 
             // persist

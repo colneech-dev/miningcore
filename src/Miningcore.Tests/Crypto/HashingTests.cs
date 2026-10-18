@@ -442,7 +442,7 @@ public class HashingTests : TestBase
         Assert.Equal("5ba2b8af7b58e359e98087ff8860ded5cdb72adcb46fee05151db1d235c81918", result);
     }
 
-    [Fact]
+    [NativeLibFact("libcryptonight")]
     public void Ghostrider_Hash()
     {
         var hasher = new Ghostrider();

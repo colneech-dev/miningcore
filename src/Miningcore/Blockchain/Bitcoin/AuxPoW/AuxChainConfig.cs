@@ -23,7 +23,8 @@ public class AuxChainConfig
     /// <summary>Address to receive aux chain block rewards</summary>
     public string Address { get; set; }
 
-    /// <summary>How often to poll getauxblock (seconds). Defaults to 10.</summary>
+    /// <summary>How often to poll getauxblock (seconds). Defaults to 10, longer than RSK and Hathor (5),
+    /// because aux chains can also be invalidated instantly by zmqBlockNotifySocket and after each submit.</summary>
     public int PollIntervalSeconds { get; set; } = 10;
 
     /// <summary>RPC method to fetch aux work. Use "createauxblock" for chains that require an address param. Defaults to "getauxblock".</summary>

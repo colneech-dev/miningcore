@@ -2,6 +2,7 @@ using System;
 using System.Text;
 using Miningcore.Extensions;
 using Miningcore.Native;
+using Miningcore.Tests.Util;
 using Xunit;
 
 namespace Miningcore.Tests.Crypto;
@@ -15,7 +16,7 @@ public class RandomXTests : TestBase
     private const string hashExpected1 = "639183aae1bf4c9a35884cb46b09cad9175f04efd7684e7262a0ac1c2f0b4e3f";
     private const string hashExpected2 = "300a0adb47603dedb42228ccb2b211104f4da45af709cd7547cd049e9489c969";
 
-    [Fact]
+    [NativeLibFact("librandomx")]
     public void CreateAndDeleteSeed()
     {
         // creation
@@ -36,7 +37,7 @@ public class RandomXTests : TestBase
         Assert.False(RandomX.realms[realm].ContainsKey(seedHex));
     }
 
-    [Fact]
+    [NativeLibFact("librandomx")]
     public void CalculateHashSlow()
     {
         var buf = new byte[32];
@@ -62,7 +63,7 @@ public class RandomXTests : TestBase
         RandomX.DeleteSeed(realm, seedHex);
     }
 
-    [Fact]
+    [NativeLibFact("librandomx")]
     public void CalculateHashFast()
     {
         var buf = new byte[32];

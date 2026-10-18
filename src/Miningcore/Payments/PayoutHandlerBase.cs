@@ -79,7 +79,7 @@ public abstract class PayoutHandlerBase
 
     protected virtual void OnRetry(Exception ex, TimeSpan timeSpan, int retry, object context)
     {
-        logger.Warn(() => $"[{LogCategory}] Retry {1} in {timeSpan} due to: {ex}");
+        logger.Warn(() => $"[{LogCategory}] Retry {retry} in {timeSpan} due to: {ex}");
     }
 
     public virtual async Task<decimal> UpdateBlockRewardBalancesAsync(IDbConnection con, IDbTransaction tx, IMiningPool pool, Block block, CancellationToken ct)
