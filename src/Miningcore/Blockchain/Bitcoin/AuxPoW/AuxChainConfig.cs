@@ -30,6 +30,14 @@ public class AuxChainConfig
     /// <summary>RPC method to fetch aux work. Use "createauxblock" for chains that require an address param. Defaults to "getauxblock".</summary>
     public string GetAuxBlockMethod { get; set; } = "getauxblock";
 
+    /// <summary>Set GetAuxBlockMethod to "getblocktemplate" for chains with no createauxblock RPC (e.g. VMESH):
+    /// the child block is assembled locally and solved blocks go out via submitblock. Requires Address
+    /// to be a bech32 segwit address with this human-readable prefix (e.g. "vm").</summary>
+    public string Bech32Prefix { get; set; }
+
+    /// <summary>Text embedded in the child coinbase scriptSig (template mode only).</summary>
+    public string CoinbaseTag { get; set; } = "/miningcore/";
+
     /// <summary>RPC method to submit a solved aux block. Use "getauxblock" for older daemons that accept the hash+auxpow via the same method. Defaults to "submitauxblock".</summary>
     public string SubmitAuxBlockMethod { get; set; } = "submitauxblock";
 

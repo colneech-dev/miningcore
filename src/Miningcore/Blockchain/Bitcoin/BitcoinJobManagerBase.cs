@@ -256,6 +256,13 @@ public abstract class BitcoinJobManagerBase<TJob> : JobManagerBase<TJob>
             // Fall back to alternative RPC if coin does not report Network HPS (Digibyte)
             if(BlockchainStats.NetworkHashrate == 0 && results[2].Error == null)
                 BlockchainStats.NetworkHashrate = results[2].Response.Value<double>();
+
+            // Multi-algorithm chains (DigiByte): networkhashps is only the default algorithm (sha256d), so the
+            // Scrypt and Odocrypt pools would all show the SHA256 figure. Use this pool's own algorithm instead.
+            var algoHashrate = BitcoinUtils.PickAlgoHashrate(miningInfoResponse.NetworkHashesPs,
+                (poolConfig.Template as BitcoinTemplate)?.HeaderHasher?.Value<string>("hash"));
+            if(algoHashrate.HasValue)
+                BlockchainStats.NetworkHashrate = algoHashrate.Value;
         }
 
         catch(Exception e)
@@ -270,7 +277,9 @@ public abstract class BitcoinJobManagerBase<TJob> : JobManagerBase<TJob>
     {
         var submitBlockRequest = hasSubmitBlockMethod
             ? new RpcRequest(BitcoinCommands.SubmitBlock, new[] { blockHex })
-            : new RpcRequest(BitcoinCommands.GetBlockTemplate, new { mode = "submit", data = blockHex });
+            // BIP22 positional form: params must be an ARRAY holding the request object. Legacy daemons
+            // (e.g. CorgiCoin, Bitcoin 0.8-era) reject a bare object with "Params must be an array".
+            : new RpcRequest(BitcoinCommands.GetBlockTemplate, new object[] { new { mode = "submit", data = blockHex } });
 
         var batch = new []
         {

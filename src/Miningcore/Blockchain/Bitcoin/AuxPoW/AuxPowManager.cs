@@ -28,6 +28,8 @@ public class AuxPowManager : IDisposable
     private volatile bool auxBlockInvalidated = true;
     private long lastFetchTicks;
     private long lastFailureTicks;   // a failed poll is not retried before fetchInterval has passed (the invalidated flag stays set on failure, so without this a down daemon was polled every second, plus once per share)
+    private readonly Dictionary<string, GbtChildBlock> children = new();
+    private readonly Queue<string> childOrder = new();
     private readonly TimeSpan fetchInterval;
 
     // Key of the last target warning emitted, so a daemon that keeps reporting the same
@@ -116,7 +118,9 @@ public class AuxPowManager : IDisposable
             var method = config.GetAuxBlockMethod;
             object args = method == "createauxblock" && !string.IsNullOrEmpty(config.Address)
                 ? new object[] { config.Address }
-                : null;
+                : method == "getblocktemplate"
+                    ? new object[] { new { rules = new[] { "segwit" } } }
+                    : null;
 
             // a slow aux daemon must not hold the refresh loop for the full default timeout
             var response = await rpc.ExecuteAsync<JToken>(logger, method, ct, args, timeout: TimeSpan.FromSeconds(10));
@@ -129,6 +133,49 @@ public class AuxPowManager : IDisposable
                     logger.Warn(() => $"[{config.Id}] {method} failed: {response.Error.Message}");
 
                 failed = true;
+                return;
+            }
+
+            if(method == "getblocktemplate")
+            {
+                var child = GbtChildBuilder.Build(response.Response, config.Address, config.Bech32Prefix, config.ChainId, config.CoinbaseTag);
+
+                // keep the last few children so a share solved against slightly stale work can still be submitted
+                lock(children)
+                {
+                    // unchanged work (only curtime moved): keep the existing child so the job isn't churned
+                    var prev = currentAuxBlock != null && children.TryGetValue(currentAuxBlock.Hash, out var p) ? p : null;
+                    if(prev != null && prev.Fingerprint == child.Fingerprint && DateTimeOffset.UtcNow - currentAuxBlock.FetchedAt < TimeSpan.FromSeconds(90))
+                    {
+                        Interlocked.Exchange(ref lastFetchTicks, DateTimeOffset.UtcNow.Ticks);
+                        auxBlockInvalidated = false;
+                        return;
+                    }
+
+                    children[child.Hash] = child;
+                    childOrder.Enqueue(child.Hash);
+                    while(childOrder.Count > 8)
+                        children.Remove(childOrder.Dequeue());
+                }
+
+                var tb = new AuxBlockData
+                {
+                    Hash = child.Hash,
+                    ChainId = child.ChainId,
+                    PreviousBlockHash = child.PreviousBlockHash,
+                    CoinbaseValue = child.CoinbaseValue,
+                    Bits = child.Bits,
+                    Target = child.Target,
+                    Height = child.Height,
+                    FetchedAt = DateTimeOffset.UtcNow,
+                };
+                // gbt "target" is big-endian display hex; bits disambiguates
+                tb.TargetValue = ResolveTarget(tb.Target, tb.Bits);
+
+                currentAuxBlock = tb;
+                Interlocked.Exchange(ref lastFetchTicks, DateTimeOffset.UtcNow.Ticks);
+                auxBlockInvalidated = false;
+                logger.Debug(() => $"[{config.Id}] Child template built: height={tb.Height} hash={tb.Hash}");
                 return;
             }
 
@@ -181,7 +228,25 @@ public class AuxPowManager : IDisposable
     public async Task<bool> SubmitAuxBlockAsync(string auxHash, string auxPoWHex, CancellationToken ct)
     {
         var submitMethod = config.SubmitAuxBlockMethod;
-        var response = await rpc.ExecuteAsync<JToken>(logger, submitMethod, ct, new object[] { auxHash, auxPoWHex });
+        object[] submitArgs = { auxHash, auxPoWHex };
+
+        if(config.GetAuxBlockMethod == "getblocktemplate")
+        {
+            GbtChildBlock child;
+            lock(children)
+                children.TryGetValue(auxHash, out child);
+
+            if(child == null)
+            {
+                logger.Warn(() => $"[{config.Id}] No stored child template for {auxHash} — cannot assemble block");
+                return false;
+            }
+
+            submitMethod = "submitblock";
+            submitArgs = new object[] { GbtChildBuilder.BuildSubmitHex(child, auxPoWHex) };
+        }
+
+        var response = await rpc.ExecuteAsync<JToken>(logger, submitMethod, ct, submitArgs);
 
         if(response.Error != null)
         {
