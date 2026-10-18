@@ -7,12 +7,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Build (Windows):**
 ```bash
 build-windows.bat
-# Runs: dotnet publish -c Release --framework net8.0 -o ../../build
+# Runs: dotnet publish -c Release --framework net10.0 -o ../../build
 ```
 
 **Build (Linux):**
 ```bash
-./build-debian.sh   # or build-ubuntu.sh / build-ubuntu2204.sh
+./build-ubuntu-24.04.sh   # or build-ubuntu-22.04.sh / build-debian-12.sh
 ```
 
 **Docker:**
@@ -65,7 +65,7 @@ docker run -d \
 
 ## Architecture Overview
 
-Miningcore is a multi-coin mining pool server targeting .NET 8. The solution lives under `src/` with two projects: `Miningcore` (main) and `Miningcore.Tests`.
+Miningcore is a multi-coin mining pool server targeting .NET 10 (LTS). The solution lives under `src/` with two projects: `Miningcore` (main) and `Miningcore.Tests`.
 
 ### Share Processing Pipeline
 

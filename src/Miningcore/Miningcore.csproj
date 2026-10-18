@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <OutputType>Exe</OutputType>
-        <TargetFramework>net8.0</TargetFramework>
+        <TargetFramework>net10.0</TargetFramework>
         <AssemblyName>Miningcore</AssemblyName>
         <RootNamespace>Miningcore</RootNamespace>
         <ServerGarbageCollection>true</ServerGarbageCollection>
@@ -76,9 +76,9 @@
         <PackageReference Include="JetBrains.Annotations" Version="2024.3.0" />
         <PackageReference Include="MailKit" Version="4.18.1" />
         <PackageReference Include="McMaster.Extensions.CommandLineUtils" Version="4.0.2" />
-        <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="8.0.1" />
-        <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.1" />
-        <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="8.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.13" />
+        <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.13" />
+        <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.13" />
         <PackageReference Include="NBitcoin" Version="7.0.42" />
         <PackageReference Include="NBitcoin.Altcoins" Version="3.0.28" />
         <PackageReference Include="NBitcoin.Zcash" Version="3.0.0" />
@@ -97,7 +97,6 @@
         <PackageReference Include="prometheus-net.AspNetCore" Version="8.1.0" />
         <PackageReference Include="prometheus-net" Version="8.2.0" />
         <PackageReference Include="protobuf-net" Version="3.2.30" />
-        <PackageReference Include="System.Diagnostics.Process" Version="4.3.0" />
         <PackageReference Include="System.Reactive" Version="6.0.0" />
         <PackageReference Include="Grpc.AspNetCore" Version="2.66.0" />
         <PackageReference Include="Google.Protobuf" Version="3.27.0" />

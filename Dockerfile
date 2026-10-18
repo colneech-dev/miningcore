@@ -25,17 +25,15 @@ RUN bash build-libs-linux.sh /native-output
 # ─────────────────────────────────────────────────────────────────────────────
 FROM ubuntu:24.04 AS build
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y wget apt-transport-https && \
-    wget https://packages.microsoft.com/config/ubuntu/24.04/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && \
-    dpkg -i packages-microsoft-prod.deb && \
-    rm packages-microsoft-prod.deb
-RUN apt-get update && apt-get install -y dotnet-sdk-8.0 && apt-get clean
+# Ubuntu 24.04's own archive carries the .NET 10 SDK, so the Microsoft package feed
+# (and the wget/dpkg dance to add it) is no longer needed.
+RUN apt-get update && apt-get install -y dotnet-sdk-10.0 && apt-get clean
 
 WORKDIR /app
 COPY . .
 
 # FIX: Publish explicitly to an isolated /out directory to clean up the pathing
-RUN dotnet publish src/Miningcore/Miningcore.csproj -c Release --framework net8.0 -p:SkipNativeLibBuild=true -o /out
+RUN dotnet publish src/Miningcore/Miningcore.csproj -c Release --framework net10.0 -p:SkipNativeLibBuild=true -o /out
 
 # FIX: Copy pre-built native .so files directly into that unified publication directory
 COPY --from=native-builder /native-output/*.so /out/
@@ -43,7 +41,7 @@ COPY --from=native-builder /native-output/*.so /out/
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 3: Runtime
 # ─────────────────────────────────────────────────────────────────────────────
-FROM mcr.microsoft.com/dotnet/aspnet:8.0-noble AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS runtime
 WORKDIR /app
 
 # FIX: Copy everything cleanly out of the unified /out folder

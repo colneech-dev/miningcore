@@ -10,7 +10,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <IsPackable>false</IsPackable>
     <Platforms>AnyCPU</Platforms>
     <AssemblyName>Miningcore.Tests</AssemblyName>
@@ -41,6 +41,8 @@
     <PackageReference Include="Npgsql" Version="9.0.3" />
     <PackageReference Include="NSubstitute" Version="4.4.0" />
     <PackageReference Include="xunit" Version="2.9.3" />
+    <!-- Transitive via the Miningcore project reference; see the justification on the suppression there. -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-rvv3-g6hj-g44x" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
@@ -63,7 +65,7 @@
   <!-- Copy library binaries from Miningcore build output on Windows  -->
   <Target Name="CopyLibsWin" AfterTargets="AfterBuild" Condition="'$(IsWindows)' == 'true'">
     <ItemGroup>
-      <Libs Include="$(ProjectDir)..\Miningcore\bin\$(Configuration)\net8.0\lib*.dll" />
+      <Libs Include="$(ProjectDir)..\Miningcore\bin\$(Configuration)\net10.0\lib*.dll" />
     </ItemGroup>
 
     <Copy SourceFiles="@(Libs)" DestinationFolder="$(OutDir)" />
@@ -72,7 +74,7 @@
   <!-- Copy library binaries from Miningcore build output on Linux  -->
   <Target Name="CopyLibsLinux" AfterTargets="AfterBuild" Condition="'$(IsLinux)' == 'true'">
     <ItemGroup>
-      <Libs Include="$(ProjectDir)..\Miningcore\bin\$(Configuration)\net8.0\lib*.so" />
+      <Libs Include="$(ProjectDir)..\Miningcore\bin\$(Configuration)\net10.0\lib*.so" />
     </ItemGroup>
 
     <Copy SourceFiles="@(Libs)" DestinationFolder="$(OutDir)" />
