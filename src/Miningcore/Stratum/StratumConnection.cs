@@ -110,7 +110,7 @@ public class StratumConnection
                     {
                         ServerCertificate = cert,
                         ClientCertificateRequired = false,
-                        EnabledSslProtocols = SslProtocols.Tls11 | SslProtocols.Tls12 | SslProtocols.Tls13,
+                        EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,   // TLS 1.1 is deprecated (RFC 8996)
                         CertificateRevocationCheckMode = X509RevocationMode.NoCheck
                     }, cts.Token);
 
@@ -391,6 +391,10 @@ public class StratumConnection
     {
         expectingProxyHeader = false;
 
+        // v1 header is at most 107 bytes plus CRLF (haproxy PROXY protocol spec, section 2.1)
+        if(seq.Length > 108)
+            throw new InvalidDataException($"Proxy-Protocol header too long ({seq.Length} bytes) from {RemoteEndpoint.Address}");
+
         var line = seq.AsString(Encoding);
         var peerAddress = RemoteEndpoint.Address;
 
@@ -406,6 +410,9 @@ public class StratumConnection
 
                 // split header parts
                 var parts = line.Split(" ");
+                if(parts.Length < 6)
+                    throw new InvalidDataException($"Malformed Proxy-Protocol header from {peerAddress}");
+
                 var remoteAddress = parts[2];
                 var remotePort = parts[4];
 

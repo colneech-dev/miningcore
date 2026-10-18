@@ -252,7 +252,20 @@ public class Program : BackgroundService
                         #endif
 
                         app.UseResponseCompression();
-                        app.UseCors(corsPolicyBuilder => corsPolicyBuilder.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+                        // Browsers may read the public API cross-origin (from any origin, or only from
+                        // api.corsOrigins when set) but never write through it: the admin endpoints are
+                        // POST and the web UI reaches the API through its own server-side proxy.
+                        app.UseCors(corsPolicyBuilder =>
+                        {
+                            var origins = clusterConfig.Api?.CorsOrigins;
+
+                            if(origins is { Length: > 0 })
+                                corsPolicyBuilder.WithOrigins(origins);
+                            else
+                                corsPolicyBuilder.AllowAnyOrigin();
+
+                            corsPolicyBuilder.WithMethods("GET", "HEAD", "OPTIONS").AllowAnyHeader();
+                        });
                         app.UseWebSockets();
                         app.MapWebSocketManager("/notifications", app.ApplicationServices.GetService<WebSocketNotificationsRelay>());
                         app.UseMetricServer();

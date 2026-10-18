@@ -7,7 +7,6 @@ using Miningcore.Util;
 using System.Collections.Concurrent;
 using System.Net;
 using NLog;
-using NLog.Targets;
 
 namespace Miningcore.Api.Controllers;
 
@@ -35,7 +34,8 @@ public class AdminApiController : ApiControllerBase
 
     #region Actions
 
-    [HttpGet("logging/level/{level}")]
+    // POST: this changes server state. GET mutations are cacheable and trivially cross-site requestable.
+    [HttpPost("logging/level/{level}")]
     public ActionResult<string> SetLoggingLevel(string level)
     {
         if (string.IsNullOrEmpty(level))
@@ -46,36 +46,21 @@ public class AdminApiController : ApiControllerBase
         if (logLevel == null)
             throw new ApiException("Invalid logging level", HttpStatusCode.BadRequest);
 
-        logger.Error("Admin update Logging Level this is Error");
-        logger.Trace("Admin update Logging Level this is Trace");
-
         foreach (var rule in LogManager.Configuration.LoggingRules)
         {
             rule.EnableLoggingForLevel(logLevel);
             rule.SetLoggingLevels(logLevel, LogLevel.Fatal); // set minimum logging level
         }
 
-        Target target = LogManager.Configuration.FindTargetByName("console");
-
-        if (target != null)
-        {
-            var loggingConfig = LogManager.Configuration;
-
-            loggingConfig.AddRule(logLevel, LogLevel.Fatal, target);
-
-            LogManager.Configuration = loggingConfig;
-        }
-
+        // The existing rules were re-levelled above. This used to also append a brand-new rule on
+        // every call, so repeated calls accumulated duplicate rules and duplicate log lines.
         LogManager.ReconfigExistingLoggers();
-
-        logger.Error("Admin update Logging Level this is Error AFTER");
-        logger.Trace("Admin update Logging Level this is Trace AFTER");
 
         logger.Info($"Logging level set to {level}");
         return "Ok";
     }
 
-    [HttpGet("payment/processing/enable")]
+    [HttpPost("payment/processing/enable")]
     public ActionResult<string> EnablePoolsPaymentProcessing()
     {
         var poolIdsUpdated = new List<string>();
@@ -95,7 +80,7 @@ public class AdminApiController : ApiControllerBase
         return poolIdsCsv;
     }
 
-    [HttpGet("payment/processing/disable")]
+    [HttpPost("payment/processing/disable")]
     public ActionResult<string> DisablePoolsPaymentProcessing()
     {
         var poolIdsUpdated = new List<string>();
@@ -115,7 +100,7 @@ public class AdminApiController : ApiControllerBase
         return poolIdsCsv;
     }
 
-    [HttpGet("payment/processing/{poolId}/enable")]
+    [HttpPost("payment/processing/{poolId}/enable")]
     public ActionResult<string> EnablePoolPaymentProcessing(string poolId)
     {
         if (string.IsNullOrEmpty(poolId))
@@ -130,7 +115,7 @@ public class AdminApiController : ApiControllerBase
         return "Ok";
     }
 
-    [HttpGet("payment/processing/{poolId}/disable")]
+    [HttpPost("payment/processing/{poolId}/disable")]
     public ActionResult<string> DisablePoolPaymentProcessing(string poolId)
     {
         if (string.IsNullOrEmpty(poolId))

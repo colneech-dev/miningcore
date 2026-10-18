@@ -64,8 +64,9 @@ public class PoolConfigValidationTests
         {
             AuxChains = new[]
             {
-                new AuxChainConfig { Id = "namecoin", Name = "Namecoin", Daemons = MinimalDaemons() },
-                new AuxChainConfig { Id = "elastos",  Name = "Elastos",  Daemons = MinimalDaemons() }
+                // distinct chainIds: two chains on one aux-merkle slot are now a validation error
+                new AuxChainConfig { Id = "namecoin", Name = "Namecoin", ChainId = 1, Daemons = MinimalDaemons() },
+                new AuxChainConfig { Id = "elastos",  Name = "Elastos",  ChainId = 6, Daemons = MinimalDaemons() }
             }
         });
 
@@ -121,6 +122,62 @@ public class PoolConfigValidationTests
 
         var result = validator.TestValidate(pool);
         result.ShouldHaveValidationErrorFor(x => x.Extra)
-            .WithErrorMessage("AuxChain config error: duplicate auxChain id 'namecoin'");
+            .WithErrorMessage("Merged mining config error: duplicate auxChain id 'namecoin'");
+    }
+
+    [Fact]
+    public void PoolConfig_ShouldFailWhenTwoAuxChainsShareAChainId()
+    {
+        var pool = BasePoolConfig();
+        pool.Extra = ExtraFrom(new BitcoinPoolConfigExtra
+        {
+            AuxChains = new[]
+            {
+                new AuxChainConfig { Id = "namecoin", ChainId = 1, Daemons = MinimalDaemons() },
+                new AuxChainConfig { Id = "other", ChainId = 1, Daemons = MinimalDaemons() }
+            }
+        });
+
+        var result = validator.TestValidate(pool);
+        result.ShouldHaveValidationErrorFor(x => x.Extra)
+            .WithErrorMessage("Merged mining config error: auxChain 'other' and 'namecoin' share chainId 1");
+    }
+
+    [Fact]
+    public void PoolConfig_ShouldFailWhenRskChainHasNoDaemons()
+    {
+        var pool = BasePoolConfig();
+        pool.Extra = ExtraFrom(new BitcoinPoolConfigExtra
+        {
+            RskChain = new Miningcore.Blockchain.Bitcoin.RSK.RskChainConfig { Id = "rsk" }
+        });
+
+        var result = validator.TestValidate(pool);
+        result.ShouldHaveValidationErrorFor(x => x.Extra)
+            .WithErrorMessage("Merged mining config error: rskChain 'rsk' is missing daemons");
+    }
+
+    [Fact]
+    public void PoolConfig_ShouldFailWhenAuxDecimalsAreOutOfRange()
+    {
+        var pool = BasePoolConfig();
+        pool.Extra = ExtraFrom(new BitcoinPoolConfigExtra
+        {
+            AuxChains = new[] { new AuxChainConfig { Id = "namecoin", ChainId = 1, Daemons = MinimalDaemons(), Decimals = 40 } }
+        });
+
+        var result = validator.TestValidate(pool);
+        result.ShouldHaveValidationErrorFor(x => x.Extra)
+            .WithErrorMessage("Merged mining config error: auxChain 'namecoin' has an invalid 'decimals' value 40");
+    }
+
+    [Fact]
+    public void DaemonConfig_ShouldRejectPortsAbove65535()
+    {
+        var pool = BasePoolConfig();
+        pool.Daemons = new[] { new DaemonEndpointConfig { Host = "localhost", Port = 70000 } };
+
+        var result = validator.TestValidate(pool);
+        result.ShouldHaveValidationErrorFor("Daemons[0].Port");
     }
 }

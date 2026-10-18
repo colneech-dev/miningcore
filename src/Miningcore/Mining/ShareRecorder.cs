@@ -268,8 +268,9 @@ public class ShareRecorder : BackgroundService
 
     private void NotifyAdminOnPolicyFallback()
     {
+        // Shares going to the recovery file is the most important admin alert there is, so it is
+        // gated on admin notifications being enabled, not on the unrelated payment-success flag.
         if(clusterConfig.Notifications?.Admin?.Enabled == true &&
-           clusterConfig.Notifications?.Admin?.NotifyPaymentSuccess == true &&
            !notifiedAdminOnPolicyFallback)
         {
             notifiedAdminOnPolicyFallback = true;

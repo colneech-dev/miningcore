@@ -52,7 +52,7 @@ public class NetworkEndpointConfigValidator<T> : AbstractValidator<T>
             .WithMessage("Host missing or empty");
 
         RuleFor(j => j.Port)
-            .GreaterThan(0)
+            .InclusiveBetween(1, 65535)
             .WithMessage("Invalid port number '{PropertyValue}'");
     }
 }
@@ -112,7 +112,7 @@ public class ApiConfigValidator : AbstractValidator<ApiConfig>
             .WithMessage("API: listenAddress missing or empty");
 
         RuleFor(j => j.Port)
-            .GreaterThan(0)
+            .InclusiveBetween(1, 65535)
             .WithMessage("API: Invalid port number '{PropertyValue}'");
     }
 }
@@ -212,31 +212,62 @@ public class PoolConfigValidator : AbstractValidator<PoolConfig>
             .Must((pool, extra, ctx) =>
             {
                 var bitcoinExtra = extra?.SafeExtensionDataAs<BitcoinPoolConfigExtra>();
+                var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var seenChainIds = new Dictionary<int, string>();
+
+                bool Fail(string issue)
+                {
+                    ctx.MessageFormatter.AppendArgument("issue", issue);
+                    return false;
+                }
+
                 if(bitcoinExtra?.AuxChains != null)
                 {
-                    var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     foreach(var aux in bitcoinExtra.AuxChains)
                     {
                         if(string.IsNullOrEmpty(aux.Id))
-                        {
-                            ctx.MessageFormatter.AppendArgument("issue", "auxChain entry is missing 'id'");
-                            return false;
-                        }
+                            return Fail("auxChain entry is missing 'id'");
                         if(!seenIds.Add(aux.Id))
-                        {
-                            ctx.MessageFormatter.AppendArgument("issue", $"duplicate auxChain id '{aux.Id}'");
-                            return false;
-                        }
+                            return Fail($"duplicate auxChain id '{aux.Id}'");
                         if(aux.Daemons == null || aux.Daemons.Length == 0)
-                        {
-                            ctx.MessageFormatter.AppendArgument("issue", $"auxChain '{aux.Id}' is missing daemons");
-                            return false;
-                        }
+                            return Fail($"auxChain '{aux.Id}' is missing daemons");
+                        // the aux merkle tree slot is derived from chainId: two chains on one slot overwrite each other
+                        if(seenChainIds.TryGetValue(aux.ChainId, out var other))
+                            return Fail($"auxChain '{aux.Id}' and '{other}' share chainId {aux.ChainId}");
+                        seenChainIds[aux.ChainId] = aux.Id;
+                        if(aux.Decimals < 0 || aux.Decimals > 18)
+                            return Fail($"auxChain '{aux.Id}' has an invalid 'decimals' value {aux.Decimals}");
                     }
                 }
+
+                // RSK and Hathor are configured separately but must not collide with the aux chains either;
+                // without daemons their managers throw at pool start instead of at config validation
+                if(bitcoinExtra?.RskChain != null)
+                {
+                    var rsk = bitcoinExtra.RskChain;
+                    if(rsk.Daemons == null || rsk.Daemons.Length == 0)
+                        return Fail($"rskChain '{rsk.Id}' is missing daemons");
+                    if(!seenIds.Add(rsk.Id ?? "rsk"))
+                        return Fail($"rskChain id '{rsk.Id}' is also used by an auxChain");
+                    if(seenChainIds.TryGetValue(rsk.ChainId, out var other))
+                        return Fail($"rskChain and auxChain '{other}' share chainId {rsk.ChainId}");
+                    seenChainIds[rsk.ChainId] = rsk.Id ?? "rsk";
+                }
+
+                if(bitcoinExtra?.HathorChain != null)
+                {
+                    var hathor = bitcoinExtra.HathorChain;
+                    if(hathor.Daemons == null || hathor.Daemons.Length == 0)
+                        return Fail($"hathorChain '{hathor.Id}' is missing daemons");
+                    if(!seenIds.Add(hathor.Id ?? "hathor"))
+                        return Fail($"hathorChain id '{hathor.Id}' is also used by another merged chain");
+                    if(seenChainIds.TryGetValue(hathor.ChainId, out var other))
+                        return Fail($"hathorChain and '{other}' share chainId {hathor.ChainId}");
+                }
+
                 return true;
             })
-            .WithMessage("AuxChain config error: {issue}");
+            .WithMessage("Merged mining config error: {issue}");
     }
 }
 

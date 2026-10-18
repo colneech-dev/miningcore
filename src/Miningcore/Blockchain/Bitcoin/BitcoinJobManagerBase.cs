@@ -319,7 +319,7 @@ public abstract class BitcoinJobManagerBase<TJob> : JobManagerBase<TJob>
         var response = await rpc.ExecuteAsync<DaemonInfo>(logger, BitcoinCommands.GetInfo, ct);
         
         // update stats
-        if(!string.IsNullOrEmpty(response.Response.Version))
+        if(response.Error == null && !string.IsNullOrEmpty(response.Response?.Version))
             BlockchainStats.NodeVersion = (string) response.Response.Version;
 
         return response.Error == null && response.Response.Connections > 0;
@@ -437,8 +437,8 @@ public abstract class BitcoinJobManagerBase<TJob> : JobManagerBase<TJob>
         var response = await rpc.ExecuteAsync<NetworkInfo>(logger, BitcoinCommands.GetNetworkInfo, ct);
 
         // update stats
-        if(!string.IsNullOrEmpty(response.Response.Version))
-            BlockchainStats.NodeVersion = (string) response.Response?.Version;
+        if(response.Error == null && !string.IsNullOrEmpty(response.Response?.Version))
+            BlockchainStats.NodeVersion = (string) response.Response.Version;
 
         return response.Error == null && response.Response?.Connections > 0;
     }

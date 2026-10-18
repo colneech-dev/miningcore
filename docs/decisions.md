@@ -203,3 +203,66 @@ convention for miner software with no on-chain meaning; storing it made `blocks.
 `auxblocks.difficulty` 65536x too high on scrypt pools while the columns next to them were not.
 If a miner-facing number is ever wanted, the API should expose the multiplier as metadata and
 the UI multiply at render time.
+
+## 2026-10-18 — Daemon TLS certificates are validated; RPC timeouts are per daemon and per call
+
+**Decision.** `RpcClient` (and the Alephium and Ergo client factories) validate TLS certificates
+unless the daemon endpoint sets `allowInsecureTls: true`. Each `RpcClient` owns its `HttpClient`.
+The client-level timeout is gone; every request carries its own, defaulting to the endpoint's
+`requestTimeoutSeconds` (30) and overridable per call. Aux refresh uses 10 s.
+
+**Why.** Every daemon connection accepted any certificate, so TLS to a remote daemon protected
+nothing. The single 30 s timeout was far too long for anything on a hot path and could not be
+changed without changing it for `sendmany` too. Operators with self-signed daemon certificates
+must now set `allowInsecureTls` on that endpoint; plain-HTTP localhost daemons are unaffected.
+
+## 2026-10-18 — An aux-work change is a rebroadcast, not a new block
+
+**Decision.** `UpdateJob` tracks aux changes separately from `isNew`. An aux-only change rebuilds
+the job and rebroadcasts it with `clean_jobs = false`, logs at Debug, and leaves
+`LastNetworkBlockTime` and the block-height stats alone.
+
+**Why.** Aux changes used to set `isNew`, so the log said "Detected new block" on every aux
+template, the pool stats recorded aux cadence as primary block cadence, and miners were told to
+drop their jobs for a change that did not invalidate their work.
+
+## 2026-10-18 — Aux rewards use the chain's decimals
+
+**Decision.** `AuxChainConfig.Decimals` (default 8) converts the aux coinbase value to the
+recorded reward. Validation rejects values outside 0..18.
+
+**Why.** The reward was divided by 10^8 for every standard aux chain regardless of its precision.
+
+## 2026-10-18 — Shares in the tolerance band are credited what they proved; difficulty comes from bits
+
+**Decision.** `BitcoinJob` records `min(stratumDifficulty, hashDifficulty)` for a share, so a
+share accepted inside the 3 % tolerance below the worker's difficulty is credited its actual
+difficulty, not the full stratum difficulty. Job difficulty is derived from `bits`, the same
+field the block target already used; a template whose `target` disagrees is logged once.
+
+**Why.** The tolerance existed to avoid false rejects around vardiff changes, but crediting full
+difficulty for a 3 % miss was a small standing overpayment a miner could aim for. Deriving
+difficulty from `target` while the block target came from `bits` let the two disagree on daemons
+that report `target` in the wrong byte order, recording a wrong network difficulty on every share.
+
+## 2026-10-18 — Hardening: stratum TLS, PROXY header, admin API, CORS, notifications, effort sweep
+
+**Decision.**
+- Stratum TLS accepts 1.2 and 1.3 only; a PROXY protocol v1 header longer than 108 bytes or with
+  fewer than six fields closes the connection.
+- Admin endpoints that change state (log level, payment processing on/off) are POST, and the log
+  level change re-levels the existing NLog rules instead of appending a new rule on every call.
+- CORS allows cross-origin GET/HEAD only, from any origin by default or from `api.corsOrigins`
+  when set.
+- The share-recovery admin alert is gated on admin notifications being enabled, not on the
+  unrelated payment-success flag. Email is optional: an unset `notifications.email` logs a warning
+  instead of throwing in the constructor, and message bodies are HTML-encoded.
+- Daemon errors during the connection check no longer null-reference on the missing version.
+- The suspicious-effort ban check runs once a minute on its own timer, one query per distinct
+  miner, instead of two queries per connection on every job broadcast and vardiff pass.
+- Config validation rejects ports outside 1..65535, RSK or Hathor sections without daemons, and
+  chain ids shared between aux, RSK and Hathor chains.
+
+**Why.** Each is a finding from the Oct 2026 negative review (`docs` of the session); none changes
+behaviour for a correctly configured pool except the CORS method restriction and the admin
+endpoints' verb, both of which only affect clients that were mutating state through a browser.
