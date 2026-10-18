@@ -108,7 +108,8 @@ public class AuxPowManager : IDisposable
                 ? new object[] { config.Address }
                 : null;
 
-            var response = await rpc.ExecuteAsync<JToken>(logger, method, ct, args);
+            // a slow aux daemon must not hold the refresh loop for the full default timeout
+            var response = await rpc.ExecuteAsync<JToken>(logger, method, ct, args, timeout: TimeSpan.FromSeconds(10));
 
             if(response.Error != null)
             {
