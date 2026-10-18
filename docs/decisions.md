@@ -480,3 +480,15 @@ The tracked `build/` directory still holds the old net8/AutoMapper binaries; do 
 duplicate-block orphaning in the payout path and the GBT-child merged-mining path). Merge `main` before deploying
 from a branch; `main`'s GBT-child path calls the two-argument `AuxPowManager.ResolveTarget`, so it will not emit
 the target warning until it uses the new overload.
+
+## 2026-10-18 — Merging main: what to expect
+
+A trial merge of `origin/main` into the combined tip (`fix/payout-idempotency`) has one textual conflict, in
+`AuxPowManager.cs`: two adjacent field declarations (`lastFailureTicks` here, the child-template dictionary
+and queue on main); keep both. It then builds and the suite passes. The trial also showed a semantic trap that
+is now defused: main's child-template path in `RefreshAsync` returns early on success, so a "succeeded" flag
+set only on the old path would have recorded a false failure after every good poll and delayed ZMQ-triggered
+refreshes by a poll interval. The failure throttle now records failures at the failure sites instead.
+After merging, switch main's child-template call from the two-argument `ResolveTarget(target, bits)` to the
+overload with `out TargetResolution` plus `LogTargetResolution`, or that path will never warn about an unusable
+target.
