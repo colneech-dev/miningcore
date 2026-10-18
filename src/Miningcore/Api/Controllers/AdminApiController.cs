@@ -233,7 +233,7 @@ public class AdminApiController : ApiControllerBase
     {
         var pool = GetPool(poolId);
         pageSize = ClampPageSize(pageSize);
-        page = Math.Max(0, page);
+        page = ClampPage(page);
 
         var batches = await cf.Run(con => payoutBatchRepo.PageAsync(con, pool.Id, page, pageSize, HttpContext.RequestAborted));
         return batches.Select(ToResponse).ToArray();
