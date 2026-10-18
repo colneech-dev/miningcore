@@ -257,6 +257,10 @@ Choosing wrongly either way pays miners twice or not at all. You never choose.
   fills in its height and a confirmed status.
 - Daemon TLS: any HTTPS daemon that stops connecting after the upgrade needs `allowInsecureTls` or a
   proper certificate.
+- Web UI price sources: price fetches now vet the DNS answer at connect time (DNS rebinding fix). It was
+  tested with a stub resolver and a local server, never against a real public price API. If the web UI
+  config has `coinPrices` entries, request `/api/price/<SYMBOL>` once for each and report the result. A 502
+  with a log line "resolves to a private address" for a source you expect to be public needs the HUMAN.
 - `build-ubuntu-22.04.sh` was never run on a 22.04 machine (not used by the deploy script).
 - The tracked `build/` directory in the repo holds old .NET 8 binaries; never deploy from it.
 
