@@ -272,6 +272,10 @@ public abstract class PoolBase : StratumServer,
 
             while(await timer.WaitForNextTickAsync(ct))
             {
+                // an error ends this tick, not the sweep: a transient database timeout used to end the loop
+                // for good, silently turning banning off until the next restart
+                try
+                {
                 var lastBlockTime = await cf.Run(con => blocksRepo.GetLastPoolBlockTimeAsync(con, poolConfig.Id, ct));
 
                 var byMiner = connections.Values
@@ -301,6 +305,11 @@ public abstract class PoolBase : StratumServer,
                             }
                         }
                     }
+                }
+                }
+                catch(Exception ex) when(ex is not OperationCanceledException)
+                {
+                    logger.Error(ex, () => "Suspicious-effort sweep failed; will retry on the next tick");
                 }
             }
         }, ex =>
@@ -406,7 +415,8 @@ public abstract class PoolBase : StratumServer,
 
         if(varDiffEnabled)
             tasks.Add(RunVardiffIdleUpdaterAsync(poolConfig.VardiffIdleSweepInterval ?? 30, ct));
-            tasks.Add(RunSuspiciousEffortSweepAsync(ct));
+
+        tasks.Add(RunSuspiciousEffortSweepAsync(ct));   // independent of vardiff; returns at once when banning is off
 
         await Task.WhenAll(tasks);
     }

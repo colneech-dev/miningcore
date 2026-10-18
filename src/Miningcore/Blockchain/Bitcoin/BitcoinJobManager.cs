@@ -45,8 +45,18 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
 
     // Aux (merged mining) submissions are handed to a background worker so that a slow aux daemon
     // never stalls a miner's mining.submit (see SubmitShareAsync / ProcessAuxSubmissionsAsync).
-    private readonly Channel<(Share Share, BitcoinJob Job)> auxSubmitQueue =
-        Channel.CreateUnbounded<(Share, BitcoinJob)>(new UnboundedChannelOptions { SingleReader = true });
+    private sealed record AuxSubmission(
+        Share Share, BitcoinJob Job,
+        List<(AuxBlockData AuxBlock, byte[] HeaderBytes, byte[] Coinbase, List<byte[]> MerkleBranch)> Candidates,
+        DateTime Enqueued);
+
+    // At most one entry per (chain, aux block hash): the claim in submittedAuxHashes is taken when a
+    // candidate is queued, so duplicates never reach the queue, and a failed submit releases the claim so
+    // a later share can queue the block again.
+    private readonly Channel<AuxSubmission> auxSubmitQueue =
+        Channel.CreateUnbounded<AuxSubmission>(new UnboundedChannelOptions { SingleReader = true });
+    private const int AuxSubmitConcurrency = 8;
+    private static readonly TimeSpan AuxSubmitMaxAge = TimeSpan.FromMinutes(5);
     private IConnectionFactory cf;
     private IAuxBlockRepository auxBlockRepo;
 
@@ -67,7 +77,14 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
     {
         if(!auxDiff1.TryGetValue(config.Id, out var diff1))
         {
-            diff1 = DifficultyUnits.ParseDiff1(config.Diff1);
+            // config validation rejects an unparseable diff1 at startup; this is the last line of defence so a
+            // bad value can never throw while the record of an already-accepted block is being built
+            if(!DifficultyUnits.TryParseDiff1(config.Diff1, out diff1))
+            {
+                logger.Error(() => $"[{config.Id}] diff1 '{config.Diff1}' is not valid hex; using Bitcoin's difficulty-1 target");
+                diff1 = BitcoinConstants.Diff1;
+            }
+
             auxDiff1[config.Id] = diff1;
         }
 
@@ -459,7 +476,26 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
         // behind it. Everything the worker needs is immutable from here on: the share's aux candidates
         // and the job they were found on.
         if(share.AuxCandidates?.Count > 0 && (auxPowManagers.Count > 0 || rskManager != null || hathorManager != null))
-            auxSubmitQueue.Writer.TryWrite((share, job));
+        {
+            // Claim each aux block before queueing it so two shares that meet the same aux target in quick
+            // succession do not both submit it. The claim is released whenever the submit does not succeed
+            // (RPC error, rejection, exception, stale), so one transient daemon failure no longer loses the
+            // block for good.
+            var claimed = new List<(AuxBlockData AuxBlock, byte[] HeaderBytes, byte[] Coinbase, List<byte[]> MerkleBranch)>();
+
+            foreach(var candidate in share.AuxCandidates)
+            {
+                var dedupKey = $"{candidate.AuxBlock.ChainId}:{candidate.AuxBlock.Hash}";
+
+                if(submittedAuxHashes.TryAdd(dedupKey, 1))
+                    claimed.Add(candidate);
+                else
+                    logger.Debug(() => $"Skipping duplicate aux submission for {candidate.AuxBlock.Hash[..Math.Min(16, candidate.AuxBlock.Hash.Length)]}");
+            }
+
+            if(claimed.Count > 0)
+                auxSubmitQueue.Writer.TryWrite(new AuxSubmission(share, job, claimed, clock.Now));
+        }
 
         // Refresh aux blocks on every share (rate-limited internally)
         // Use CancellationToken.None so a miner disconnect doesn't abort the refresh
@@ -499,11 +535,23 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
             StartAuxRefreshLoop(ct);
             _ = Task.Run(() => ProcessAuxSubmissionsAsync(ct), ct);
 
-            Observable.Interval(TimeSpan.FromMinutes(1))
-                .Select(_ => Observable.FromAsync(() =>
-                    Guard(() => ConfirmAuxBlocksAsync(ct), ex => logger.Error(ex))))
-                .Concat()
-                .Subscribe();
+            // A plain loop, like the refresh loop: Interval + Concat queued a deferred pass every minute for as
+            // long as a pass (which can take several RPC timeouts) was running
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    while(!ct.IsCancellationRequested)
+                    {
+                        await Task.Delay(TimeSpan.FromMinutes(1), ct);
+                        await Guard(() => ConfirmAuxBlocksAsync(ct), ex => logger.Error(ex));
+                    }
+                }
+                catch(OperationCanceledException)
+                {
+                    // shutdown
+                }
+            }, ct);
         }
     }
 
@@ -720,18 +768,45 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
     /// </summary>
     private async Task ProcessAuxSubmissionsAsync(CancellationToken ct)
     {
+        // Several submissions run at once so one hung aux daemon (up to the 30 s default RPC timeout per
+        // call) cannot hold up a valid block for a healthy chain queued behind it.
+        using var gate = new SemaphoreSlim(AuxSubmitConcurrency);
+
         try
         {
-            await foreach(var (share, job) in auxSubmitQueue.Reader.ReadAllAsync(ct))
+            await foreach(var item in auxSubmitQueue.Reader.ReadAllAsync(ct))
             {
-                try
+                await gate.WaitAsync(ct);
+
+                _ = Task.Run(async () =>
                 {
-                    await SubmitAuxCandidatesAsync(share, job, ct);
-                }
-                catch(Exception ex)
-                {
-                    logger.Error(ex, () => "Error processing aux submissions");
-                }
+                    try
+                    {
+                        if(clock.Now - item.Enqueued > AuxSubmitMaxAge)
+                        {
+                            // a template this old is long invalid on the aux chain; release the claims
+                            foreach(var c in item.Candidates)
+                                submittedAuxHashes.TryRemove($"{c.AuxBlock.ChainId}:{c.AuxBlock.Hash}", out _);
+
+                            logger.Warn(() => $"Dropped {item.Candidates.Count} aux candidate(s) that waited more than {AuxSubmitMaxAge.TotalMinutes:0} minutes in the submit queue");
+                            return;
+                        }
+
+                        await SubmitAuxCandidatesAsync(item.Share, item.Job, item.Candidates, ct);
+                    }
+                    catch(OperationCanceledException)
+                    {
+                        // shutdown
+                    }
+                    catch(Exception ex)
+                    {
+                        logger.Error(ex, () => "Error processing aux submissions");
+                    }
+                    finally
+                    {
+                        gate.Release();
+                    }
+                }, ct);
             }
         }
         catch(OperationCanceledException)
@@ -740,22 +815,15 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
         }
     }
 
-    private async Task SubmitAuxCandidatesAsync(Share share, BitcoinJob job, CancellationToken ct)
+    private async Task SubmitAuxCandidatesAsync(Share share, BitcoinJob job,
+        List<(AuxBlockData AuxBlock, byte[] HeaderBytes, byte[] Coinbase, List<byte[]> MerkleBranch)> candidates, CancellationToken ct)
     {
         var submittingJob = job;
-        foreach(var (auxBlock, headerBytes, coinbase, candidateBranch) in share.AuxCandidates)
+        foreach(var (auxBlock, headerBytes, coinbase, candidateBranch) in candidates)
         {
-            // Claim the aux block before submitting so two shares that meet the same aux target in
-            // quick succession do not both submit it. The claim is released again below whenever the
-            // submit does not succeed (RPC error, rejection, exception). Before that release existed a
-            // single transient daemon failure made every later share for the same aux block skip as a
-            // "duplicate", and the block was lost for good.
+            // the claim was taken when the candidate was queued; it is released below whenever the submit
+            // does not succeed
             var dedupKey = $"{auxBlock.ChainId}:{auxBlock.Hash}";
-            if(!submittedAuxHashes.TryAdd(dedupKey, 1))
-            {
-                logger.Debug(() => $"Skipping duplicate aux submission for {auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]}");
-                continue;
-            }
 
             // RSK uses mnr_submitBitcoinBlock — route by chainId
             if(rskManager != null && auxBlock.ChainId == rskManager.Config.ChainId)
@@ -824,7 +892,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                                 Created = clock.Now,
                             };
 
-                            _ = PersistAuxBlockAsync(record, "RSK block");
+                            _ = PersistAuxBlockAsync(record, "RSK block", ct);
                         }
                         catch(Exception ex)
                         {
@@ -882,7 +950,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                                 Created = clock.Now,
                             };
 
-                            _ = PersistAuxBlockAsync(record, "Hathor block");
+                            _ = PersistAuxBlockAsync(record, "Hathor block", ct);
                         }
                         catch(Exception ex)
                         {
@@ -961,7 +1029,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                             Created = clock.Now,
                         };
 
-                        _ = PersistAuxBlockAsync(record, "aux block");
+                        _ = PersistAuxBlockAsync(record, "aux block", ct);
                     }
                     catch(Exception ex)
                     {
@@ -984,7 +1052,7 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
     /// gave up on the first error. After the retries the record goes to a recovery file next to the
     /// share recovery file so an operator can insert it by hand.
     /// </summary>
-    private async Task PersistAuxBlockAsync(Persistence.Model.AuxBlock record, string what)
+    private async Task PersistAuxBlockAsync(Persistence.Model.AuxBlock record, string what, CancellationToken ct)
     {
         var delays = new[] { 1, 2, 4, 8, 16, 32, 60, 60 };
 
@@ -1009,7 +1077,18 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                 }
 
                 logger.Warn(() => $"Failed to persist {what} {record.AuxBlockHash} ({ex.GetType().Name}: {ex.Message}); retry {attempt + 1}/{delays.Length} in {delays[attempt]}s");
-                await Task.Delay(TimeSpan.FromSeconds(delays[attempt]));
+
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(delays[attempt]), ct);
+                }
+                catch(OperationCanceledException)
+                {
+                    // shutting down mid-retry: the in-memory retry would be lost, so hand the record to the recovery file
+                    logger.Warn(() => $"Shutting down before {what} {record.AuxBlockHash} was persisted; writing it to {AuxBlockRecoveryFile}");
+                    await WriteAuxBlockRecoveryAsync(record);
+                    return;
+                }
             }
         }
     }
@@ -1063,28 +1142,33 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
         if(refreshers.Count == 0)
             return;
 
-        // A plain loop: one pass, then a one second pause. Interval + Concat would have queued a deferred
-        // pass every second for as long as a daemon was slow (each pass can take the 10 s refresh
-        // timeout), draining only after the daemon recovered.
-        _ = Task.Run(async () =>
+        // One loop per chain, each: a pass, then a one second pause. Separate loops so one hung daemon (up to the
+        // 10 s refresh timeout) never delays the healthy chains, and plain loops because Interval + Concat would
+        // have queued a deferred pass every second for as long as a daemon was slow.
+        foreach(var refresh in refreshers)
         {
-            try
+            var refreshCopy = refresh;
+
+            _ = Task.Run(async () =>
             {
-                while(!ct.IsCancellationRequested)
+                try
                 {
-                    await Task.WhenAll(refreshers.Select(r => Guard(() => r(ct), ex => logger.Debug(ex))));
-                    await Task.Delay(TimeSpan.FromSeconds(1), ct);
+                    while(!ct.IsCancellationRequested)
+                    {
+                        await Guard(() => refreshCopy(ct), ex => logger.Debug(ex));
+                        await Task.Delay(TimeSpan.FromSeconds(1), ct);
+                    }
                 }
-            }
-            catch(OperationCanceledException)
-            {
-                // shutdown
-            }
-            catch(Exception ex)
-            {
-                logger.Error(ex, () => "Aux refresh loop terminated");
-            }
-        }, ct);
+                catch(OperationCanceledException)
+                {
+                    // shutdown
+                }
+                catch(Exception ex)
+                {
+                    logger.Error(ex, () => "Aux refresh loop terminated");
+                }
+            }, ct);
+        }
     }
 
     #region RSK confirmation
@@ -1219,7 +1303,9 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
             var tip = currentHeight.Value;
 
             // 1. Resolve records that still carry the merged-mining hash and no height
-            var unresolved = await cf.Run(con => auxBlockRepo.GetBlocksWithoutHeightAsync(con, poolConfig.Id, rskConfig.Id, 50, ct));
+            var unresolved = (await cf.Run(con => auxBlockRepo.GetBlocksWithoutHeightAsync(con, poolConfig.Id, rskConfig.Id, 50, ct, pendingOnly: true)))
+                .Where(x => x.Status == BlockStatus.Pending)
+                .ToArray();
 
             if(unresolved.Length > 0)
             {

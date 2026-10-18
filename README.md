@@ -16,7 +16,7 @@ This fork adds the following changes on top of upstream:
 - Database migration: `src/Miningcore/Persistence/Postgres/Scripts/add_block_difficulty.sql` (required; without it every block insert fails on a database created before Oct 2026)
 - Database migration: `src/Miningcore/Persistence/Postgres/Scripts/add_auxblocks.sql` creates the `auxblocks` table for merged mining
 - **Daemon options** — `allowInsecureTls` (accept self-signed certificates; off by default since Oct 2026, previously every daemon connection accepted any certificate) and `requestTimeoutSeconds` (per-request RPC timeout, default 30) on any daemon endpoint
-- **API options** — `corsOrigins` restricts cross-origin browser reads to the listed origins; cross-origin requests are GET/HEAD only. Admin endpoints that change state (`logging/level`, `payment/processing/*`) take POST
+- **API options** — `corsOrigins` restricts which browser origins may call the API cross-origin (empty allows any, as before). Admin endpoints that change state (`logging/level`, `payment/processing/*`) take POST
 - **Aux chain options** — `decimals` (default 8) and `diff1` per `auxChains[]` entry
 - **Merged mining example** — `examples/digibyte_sha256_merged_pool.json` covers `auxChains`, `rskChain` and `hathorChain`
 - **Tests without native libraries** — `dotnet test` skips the hashing tests that need `libcryptonight`, `libcryptonote`, `librandomx` or `librandomarq` when they are not built, with the reason in the output

@@ -74,4 +74,16 @@ public class DifficultyUnitsTests
         Assert.Equal(BitcoinConstants.Diff1, DifficultyUnits.ParseDiff1("00ffff0000000000000000000000000000000000000000000000000000"));
         Assert.True(DifficultyUnits.ParseDiff1("ff" + new string('0', 62)).Sign > 0);
     }
+
+    [Theory]
+    [InlineData("0x00ff", false)]
+    [InlineData("zz", false)]
+    [InlineData("0", false)]
+    [InlineData("00ffff0000000000000000000000000000000000000000000000000000", true)]
+    [InlineData("", true)]
+    [InlineData(null, true)]
+    public void TryParseDiff1_NeverThrows_AndRejectsNonPositiveOrMalformed(string hex, bool expected)
+    {
+        Assert.Equal(expected, DifficultyUnits.TryParseDiff1(hex, out _));
+    }
 }

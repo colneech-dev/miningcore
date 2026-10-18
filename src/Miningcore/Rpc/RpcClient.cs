@@ -138,6 +138,11 @@ public class RpcClient
                 .ToArray();
         }
 
+        catch(OperationCanceledException) when(!ct.IsCancellationRequested)
+        {
+            return Enumerable.Repeat(new RpcResponse<JToken>(null, new JsonRpcError(-500, $"Timeout after {defaultTimeout.TotalSeconds:0}s", null)), batch.Length).ToArray();
+        }
+
         catch(Exception ex)
         {
             return Enumerable.Repeat(new RpcResponse<JToken>(null, new JsonRpcError(-500, ex.Message, null, ex)), batch.Length).ToArray();

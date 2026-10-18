@@ -180,4 +180,33 @@ public class PoolConfigValidationTests
         var result = validator.TestValidate(pool);
         result.ShouldHaveValidationErrorFor("Daemons[0].Port");
     }
+
+    [Theory]
+    [InlineData("0x00000000ffff0000")]
+    [InlineData("not hex")]
+    public void PoolConfig_ShouldFailWhenAuxDiff1IsNotPlainHex(string diff1)
+    {
+        var pool = BasePoolConfig();
+        pool.Extra = ExtraFrom(new BitcoinPoolConfigExtra
+        {
+            AuxChains = new[] { new AuxChainConfig { Id = "namecoin", ChainId = 1, Daemons = MinimalDaemons(), Diff1 = diff1 } }
+        });
+
+        var result = validator.TestValidate(pool);
+        result.ShouldHaveValidationErrorFor(x => x.Extra)
+            .WithErrorMessage("Merged mining config error: auxChain 'namecoin' has an invalid 'diff1' value (expected plain hex, no 0x prefix)");
+    }
+
+    [Fact]
+    public void PoolConfig_ShouldAcceptAPlainHexAuxDiff1()
+    {
+        var pool = BasePoolConfig();
+        pool.Extra = ExtraFrom(new BitcoinPoolConfigExtra
+        {
+            AuxChains = new[] { new AuxChainConfig { Id = "namecoin", ChainId = 1, Daemons = MinimalDaemons(), Diff1 = "00ffff0000000000000000000000000000000000000000000000000000" } }
+        });
+
+        var result = validator.TestValidate(pool);
+        result.ShouldNotHaveValidationErrorFor(x => x.Extra);
+    }
 }

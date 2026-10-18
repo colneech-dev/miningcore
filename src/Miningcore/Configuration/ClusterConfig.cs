@@ -1255,8 +1255,7 @@ public partial class ApiConfig
     public string[] AdminIpWhitelist { get; set; }
 
     /// <summary>
-    /// Browser origins allowed to read the API cross-origin (CORS). Null or empty allows any origin.
-    /// Cross-origin requests are read-only (GET/HEAD) in either case.
+    /// Browser origins allowed to call the API cross-origin (CORS). Null or empty allows any origin.
     /// </summary>
     public string[] CorsOrigins { get; set; }
 

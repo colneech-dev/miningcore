@@ -525,7 +525,7 @@ public class BitcoinJob
             return blockHeader.ToBytes();
     }
 
-    private static string lastTargetMismatchKey;
+    private static int targetMismatchWarned;   // 0/1; the (bits, target) pair changes every block, so keying on it would warn per block
 
     private void WarnOnceIfTargetDisagrees(Target bitsTarget)
     {
@@ -537,12 +537,10 @@ public class BitcoinJob
             if(new uint256(BlockTemplate.Target) == bitsTarget.ToUInt256())
                 return;
 
-            var key = BlockTemplate.Bits + ":" + BlockTemplate.Target;
-            if(lastTargetMismatchKey == key)
-                return;
-
-            lastTargetMismatchKey = key;
-            logger.Warn(() => $"Block template 'target' {BlockTemplate.Target} does not match 'bits' {BlockTemplate.Bits}; using bits for difficulty and block target");
+            if(Interlocked.Exchange(ref targetMismatchWarned, 1) == 0)
+                logger.Warn(() => $"Block template 'target' {BlockTemplate.Target} does not match 'bits' {BlockTemplate.Bits}; using bits for difficulty and block target (further mismatches are logged at Debug)");
+            else
+                logger.Debug(() => $"Block template 'target' {BlockTemplate.Target} does not match 'bits' {BlockTemplate.Bits}");
         }
         catch(Exception)
         {

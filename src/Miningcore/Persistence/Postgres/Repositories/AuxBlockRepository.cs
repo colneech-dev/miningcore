@@ -107,10 +107,16 @@ public class AuxBlockRepository : IAuxBlockRepository
             .ToArray();
     }
 
-    public async Task<AuxBlock[]> GetBlocksWithoutHeightAsync(IDbConnection con, string poolId, string chainId, int limit, CancellationToken ct)
+    public async Task<AuxBlock[]> GetBlocksWithoutHeightAsync(IDbConnection con, string poolId, string chainId, int limit, CancellationToken ct, bool pendingOnly = false)
     {
-        const string query = @"SELECT * FROM auxblocks WHERE poolid = @poolId AND chainid = @chainId
-            AND blockheight IS NULL ORDER BY created ASC LIMIT @limit";
+        // pendingOnly matters for rows that can stay height-less forever (an RSK block that never reached the
+        // main chain is orphaned without a height): without it they fill the LIMIT window, are reprocessed and
+        // rewritten every tick, and starve newer rows
+        var query = pendingOnly
+            ? @"SELECT * FROM auxblocks WHERE poolid = @poolId AND chainid = @chainId
+                AND blockheight IS NULL AND status = 'pending' ORDER BY created ASC LIMIT @limit"
+            : @"SELECT * FROM auxblocks WHERE poolid = @poolId AND chainid = @chainId
+                AND blockheight IS NULL ORDER BY created ASC LIMIT @limit";
 
         return (await con.QueryAsync<Entities.AuxBlock>(new CommandDefinition(query, new
         {

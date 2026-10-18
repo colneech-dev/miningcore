@@ -237,6 +237,8 @@ public class PoolConfigValidator : AbstractValidator<PoolConfig>
                         seenChainIds[aux.ChainId] = aux.Id;
                         if(aux.Decimals < 0 || aux.Decimals > 18)
                             return Fail($"auxChain '{aux.Id}' has an invalid 'decimals' value {aux.Decimals}");
+                        if(!Miningcore.Blockchain.Bitcoin.DifficultyUnits.TryParseDiff1(aux.Diff1, out _))
+                            return Fail($"auxChain '{aux.Id}' has an invalid 'diff1' value (expected plain hex, no 0x prefix)");
                     }
                 }
 

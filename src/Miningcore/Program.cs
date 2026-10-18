@@ -252,9 +252,10 @@ public class Program : BackgroundService
                         #endif
 
                         app.UseResponseCompression();
-                        // Browsers may read the public API cross-origin (from any origin, or only from
-                        // api.corsOrigins when set) but never write through it: the admin endpoints are
-                        // POST and the web UI reaches the API through its own server-side proxy.
+                        // Any origin may call the public API cross-origin unless api.corsOrigins lists the
+                        // allowed ones. Methods stay unrestricted: the public API has a POST endpoint
+                        // (miner settings) that third-party UIs call from the browser, and restricting methods
+                        // would break them. The admin endpoints are on their own port behind an IP whitelist.
                         app.UseCors(corsPolicyBuilder =>
                         {
                             var origins = clusterConfig.Api?.CorsOrigins;
@@ -264,7 +265,7 @@ public class Program : BackgroundService
                             else
                                 corsPolicyBuilder.AllowAnyOrigin();
 
-                            corsPolicyBuilder.WithMethods("GET", "HEAD", "OPTIONS").AllowAnyHeader();
+                            corsPolicyBuilder.AllowAnyMethod().AllowAnyHeader();
                         });
                         app.UseWebSockets();
                         app.MapWebSocketManager("/notifications", app.ApplicationServices.GetService<WebSocketNotificationsRelay>());

@@ -30,6 +30,18 @@ public static class DifficultyUnits
         return BigInteger.Parse("0" + hex.Trim(), NumberStyles.HexNumber);
     }
 
+    /// <summary>Like <see cref="ParseDiff1"/> but returns false instead of throwing on a malformed value.</summary>
+    public static bool TryParseDiff1(string hex, out BigInteger diff1)
+    {
+        if(string.IsNullOrWhiteSpace(hex))
+        {
+            diff1 = BitcoinConstants.Diff1;
+            return true;
+        }
+
+        return BigInteger.TryParse("0" + hex.Trim(), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out diff1) && diff1.Sign > 0;
+    }
+
     /// <summary>
     /// Difficulty of a hash: diff1 / hash. <paramref name="hash"/> is in internal (little-endian)
     /// byte order, exactly as the header hasher produces it. Zero when the hash is zero.

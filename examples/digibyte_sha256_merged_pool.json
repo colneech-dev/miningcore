@@ -33,7 +33,7 @@
         "enabled": true,
         "listenAddress": "127.0.0.1",
         "port": 4000,
-        "//corsOrigins": "optional: browser origins allowed to read the API cross-origin; cross-origin requests are GET/HEAD only",
+        "//corsOrigins": "optional: browser origins allowed to call the API cross-origin; empty allows any",
         "corsOrigins": []
     },
     "pools": [{

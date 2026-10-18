@@ -309,3 +309,37 @@ behind a queue, a submission processed after the next template arrived was dropp
 "superseded": a valid mined block lost. The daemon is the right judge of staleness. The Rx loop
 queued one deferred pass per second while a daemon was slow, a backlog that only drained after
 recovery.
+
+## 2026-10-18 — Review round 2 (server): corrections to the entries above
+
+**Decision.** Fixes from an independent review of `fix/negative-review`:
+- Aux submissions are claimed when queued (not in the worker), run up to eight at a time, and
+  are dropped after five minutes in the queue. The single serial worker let one hung daemon hold
+  up a valid block for a healthy chain, and duplicates reached the queue.
+- The RSK confirmer reads only pending rows without a height. An RSK block that never reached
+  the main chain is orphaned without a height; the unfiltered query kept returning it, rewrote it
+  every tick, pinned the lookback at 2000 blocks and, after 50 of them, starved newer rows.
+- The suspicious-effort sweep survives an error in a tick (it used to end for good on the first
+  database timeout); `RunAsync` has explicit braces around the vardiff task.
+- The PROXY header length bound applies to lines that start with `PROXY ` only; with an optional
+  header a long first request (a `mining.authorize` over 108 bytes) was being rejected.
+- **CORS methods are unrestricted again.** The earlier entry said nothing needs cross-origin
+  writes; the public miner-settings endpoint is a POST that third-party UIs call from the browser.
+  `corsOrigins` still narrows origins.
+- `diff1` is validated at startup (plain hex) and parsed with a fallback, so a bad value can no
+  longer throw while the record of an already-accepted aux block is built.
+- Aux persistence retries stop on shutdown by writing the record to the recovery file; the
+  confirmation timer and the refresh loops are plain loops, one refresh loop per chain.
+- A failed aux/RSK/Hathor poll is not retried before the poll interval has passed.
+- The `target`/`bits` mismatch warns once, then logs at Debug.
+- RSK: an object response with `blockImportedResult: IMPORTED_*` counts as accepted. RSKj
+  documents this response shape; before, any object counted as a rejection. **Not verified against
+  a live node from here: check with one found block.**
+
+**Not changed, with reasons.**
+- A reviewer said daemon units are 65536x off for scrypt coins. They are not: Bitcoin forks'
+  `getdifficulty` use the same formula (reference `0x00ffff` at exponent 0x1d), which is what
+  NBitcoin's `Target.Difficulty` computes; the 65536 only appears in the stratum share
+  difficulty, which is exactly what is divided out.
+- Block candidates are credited `min(stratumDifficulty, hashDifficulty)` too, not only shares in
+  the tolerance band; a candidate below the worker's difficulty is credited what it proved.
