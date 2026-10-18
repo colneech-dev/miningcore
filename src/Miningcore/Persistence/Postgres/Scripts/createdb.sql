@@ -117,6 +117,20 @@ CREATE TABLE payments
 
 CREATE INDEX IDX_PAYMENTS_POOL_COIN_WALLET on payments(poolid, coin, address);
 
+CREATE TABLE payoutbatches
+(
+	id BIGSERIAL NOT NULL PRIMARY KEY,
+	poolid TEXT NOT NULL,
+	status TEXT NOT NULL,
+	recipients TEXT NOT NULL,
+	transactionconfirmationdata TEXT NULL,
+	error TEXT NULL,
+	created TIMESTAMPTZ NOT NULL,
+	updated TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IDX_PAYOUTBATCHES_POOL_STATUS on payoutbatches(poolid, status);
+
 CREATE TABLE poolstats
 (
 	id BIGSERIAL NOT NULL PRIMARY KEY,

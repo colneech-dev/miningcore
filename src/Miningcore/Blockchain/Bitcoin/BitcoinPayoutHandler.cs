@@ -33,9 +33,10 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
         IBlockRepository blockRepo,
         IBalanceRepository balanceRepo,
         IPaymentRepository paymentRepo,
+        IPayoutBatchRepository payoutBatchRepo,
         IMasterClock clock,
         IMessageBus messageBus) :
-        base(cf, mapper, shareRepo, blockRepo, balanceRepo, paymentRepo, clock, messageBus)
+        base(cf, mapper, shareRepo, blockRepo, balanceRepo, paymentRepo, payoutBatchRepo, clock, messageBus)
     {
         Contract.RequiresNonNull(ctx);
         Contract.RequiresNonNull(balanceRepo);
@@ -262,6 +263,9 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
 
             var didUnlockWallet = false;
 
+            // record the intent before anything leaves the wallet (idempotent payouts, see PayoutHandlerBase)
+            var batch = await BeginPayoutBatchAsync(balances);
+
             // send command
             tryTransfer:
             var result = await rpcClient.ExecuteAsync<string>(logger, BitcoinCommands.SendMany, ct, args);
@@ -283,7 +287,8 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
                 else
                     logger.Info(() => $"[{LogCategory}] Payment transaction id: {txId}");
 
-                await PersistPaymentsAsync(balances, txId);
+                // marks the batch sent, then persists payments and balances; recoverable at every step
+                await CompletePayoutBatchAsync(batch, !string.IsNullOrEmpty(txId) ? txId : "unknown");
 
                 NotifyPayoutSuccess(poolConfig.Id, balances, new[]
                 {
@@ -312,16 +317,32 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
                         }
 
                         else
-                            logger.Error(() => $"[{LogCategory}] {BitcoinCommands.WalletPassphrase} returned error: {result.Error.Message} code {result.Error.Code}");
+                        {
+                            logger.Error(() => $"[{LogCategory}] {BitcoinCommands.WalletPassphrase} returned error: {unlockResult.Error.Message} code {unlockResult.Error.Code}");
+                            await MarkPayoutBatchFailedAsync(batch, $"{BitcoinCommands.WalletPassphrase} returned error: {unlockResult.Error.Message} code {unlockResult.Error.Code}");
+                        }
                     }
 
                     else
+                    {
                         logger.Error(() => $"[{LogCategory}] Wallet is locked but walletPassword was not configured. Unable to send funds.");
+                        await MarkPayoutBatchFailedAsync(batch, "wallet is locked and no walletPassword is configured");
+                    }
+                }
+
+                else if(IsOutcomeUnknown(result.Error))
+                {
+                    // no daemon response: the transaction may have been broadcast. The batch stays pending
+                    // and payouts for this pool halt until an operator checks the wallet and resolves it.
+                    logger.Error(() => $"[{LogCategory}] {BitcoinCommands.SendMany} failed without a daemon response ({result.Error.Message}); payout batch {batch.Id} stays pending and payouts are halted until it is resolved via api/admin/pools/{poolConfig.Id}/payoutbatches/{batch.Id}/resolve");
+
+                    NotifyPayoutFailure(poolConfig.Id, balances, $"{BitcoinCommands.SendMany} outcome unknown ({result.Error.Message}); payout batch {batch.Id} needs operator resolution", null);
                 }
 
                 else
                 {
                     logger.Error(() => $"[{LogCategory}] {BitcoinCommands.SendMany} returned error: {result.Error.Message} code {result.Error.Code}");
+                    await MarkPayoutBatchFailedAsync(batch, $"{BitcoinCommands.SendMany} returned error: {result.Error.Message} code {result.Error.Code}");
 
                     NotifyPayoutFailure(poolConfig.Id, balances, $"{BitcoinCommands.SendMany} returned error: {result.Error.Message} code {result.Error.Code}", null);
                 }
@@ -349,6 +370,9 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
                     // use a common id for all log entries related to this transfer
                     var transferId = CorrelationIdGenerator.GetNextId();
 
+                    var balance = new Balance { PoolId = poolConfig.Id, Address = address, Amount = amount };
+                    var batch = await BeginPayoutBatchAsync(new[] { balance });
+
                     logger.Info(()=> $"[{LogCategory}] [{transferId}] Sending {FormatAmount(amount)} to {address}");
 
                     var result = await rpcClient.ExecuteAsync<string>(logger, BitcoinCommands.SendToAddress, ct, new object[]
@@ -361,22 +385,29 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
                     var txId = result.Response;
 
                     if(result.Error != null)
-                        throw new Exception($"[{transferId}] {BitcoinCommands.SendToAddress} returned error: {result.Error.Message} code {result.Error.Code}");
+                    {
+                        var error = $"[{transferId}] {BitcoinCommands.SendToAddress} returned error: {result.Error.Message} code {result.Error.Code}";
+
+                        if(IsOutcomeUnknown(result.Error))
+                            logger.Error(() => $"[{LogCategory}] {error}; no daemon response, so the transaction may have been broadcast. Payout batch {batch.Id} stays pending and payouts are halted until it is resolved");
+                        else
+                            await MarkPayoutBatchFailedAsync(batch, error);
+
+                        throw new Exception(error);
+                    }
 
                     if(string.IsNullOrEmpty(txId))
+                    {
+                        logger.Error(() => $"[{LogCategory}] [{transferId}] no transaction id returned; payout batch {batch.Id} stays pending until it is resolved");
                         throw new Exception($"[{transferId}] {BitcoinCommands.SendToAddress} did not return a transaction id!");
-                    else
-                        logger.Info(() => $"[{LogCategory}] [{transferId}] Payment transaction id: {txId}");
+                    }
+
+                    logger.Info(() => $"[{LogCategory}] [{transferId}] Payment transaction id: {txId}");
+
+                    await CompletePayoutBatchAsync(batch, txId);
 
                     lock(resultsLock)
-                    {
-                        successBalances.Add(new Balance
-                        {
-                            PoolId = poolConfig.Id,
-                            Address = address,
-                            Amount = amount,
-                        }, txId);
-                    }
+                        successBalances.Add(balance, txId);   // for the success notification; persistence already happened per batch
                 }, ex =>
                 {
                     lock(resultsLock)
@@ -386,8 +417,6 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
 
             if(successBalances.Any())
             {
-                await PersistPaymentsAsync(successBalances);
-
                 NotifyPayoutSuccess(poolConfig.Id, successBalances.Keys.ToArray(), successBalances.Values.ToArray(), null);
             }
 

@@ -1,3 +1,4 @@
+using Dapper;
 using System.Collections.Concurrent;
 using System.Reactive.Concurrency;
 using System.Reactive.Disposables;
@@ -196,8 +197,47 @@ public class PayoutManager : BackgroundService
             logger.Info(() => $"No updated blocks for pool {poolConfig.Id}");
     }
 
+    private bool payoutBatchTableChecked;
+
+    /// <summary>
+    /// payoutbatches is required (add_payoutbatches.sql). Without it every payout would fail inside
+    /// BeginPayoutBatchAsync with a raw database error on each run, so the missing table is reported
+    /// once at Fatal with the fix, and payouts (not balance updates) are skipped until it exists.
+    /// </summary>
+    private async Task<bool> EnsurePayoutBatchTableAsync(CancellationToken ct)
+    {
+        if(payoutBatchTableChecked)
+            return true;
+
+        try
+        {
+            await cf.Run(con => con.ExecuteAsync(new CommandDefinition("SELECT 1 FROM payoutbatches LIMIT 0", cancellationToken: ct)));
+            payoutBatchTableChecked = true;
+            return true;
+        }
+
+        catch(Exception ex)
+        {
+            logger.Fatal(() => $"Payouts are disabled: the payoutbatches table is missing or unreadable ({ex.Message}). " +
+                "Run src/Miningcore/Persistence/Postgres/Scripts/add_payoutbatches.sql against the database and restart.");
+            return false;
+        }
+    }
+
     private async Task PayoutPoolBalancesAsync(IMiningPool pool, PoolConfig config, IPayoutHandler handler, CancellationToken ct)
     {
+        if(!await EnsurePayoutBatchTableAsync(ct))
+            return;
+
+        // Finish any batch whose coins left the wallet but whose payments were never persisted (they
+        // would otherwise be paid again below), and refuse to pay while a batch with an unknown
+        // outcome exists. See PayoutHandlerBase and docs/decisions.md (Payout idempotency).
+        if(!await handler.RecoverPayoutBatchesAsync(ct))
+        {
+            logger.Error(() => $"[{config.Id}] Payouts halted: a payout batch with unknown outcome needs operator resolution (api/admin/pools/{config.Id}/payoutbatches)");
+            return;
+        }
+
         var poolBalancesOverMinimum = await cf.Run(con =>
             balanceRepo.GetPoolBalancesOverThresholdAsync(con, config.Id, config.PaymentProcessing.MinimumPayment));
 

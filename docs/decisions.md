@@ -382,3 +382,34 @@ recovery.
 effort SQL, `ToBlock` and the backfill are verified by reading and by running the script's output through
 review, not against a database. Native-library tests are skipped on machines without the libraries; CI
 builds them, local green runs are weaker than they look.
+## 2026-10-18 — Payout idempotency: a payout batch is recorded before coins leave the wallet
+
+**Decision.** `PayoutHandlerBase` gains payout batches: `BeginPayoutBatchAsync` writes a
+`payoutbatches` row (recipients as JSON, status `pending`) before the send and throws if it
+cannot; `CompletePayoutBatchAsync` first marks the row `sent` with the transaction id, then
+inserts payments, debits balances and marks it `completed` in one transaction;
+`MarkPayoutBatchFailedAsync` records a daemon rejection. `RecoverPayoutBatchesAsync`, called by
+`PayoutManager` before every payout run, finishes `sent` batches and refuses to pay while a
+`pending` batch exists, with one admin notification per batch. Transport failures from
+`RpcClient` (code -500: timeout, connection error) are treated as unknown outcome and leave the
+batch pending; daemon-reported errors mark it failed. Operators resolve a pending batch through
+`POST api/admin/pools/{id}/payoutbatches/{batchId}/resolve?outcome=sent&txid=…` or
+`?outcome=notsent`. Bitcoin-family (including Equihash) and Handshake handlers use the batches on
+both their `sendmany` and per-address `sendtoaddress` paths.
+
+**Why.** A payout was `sendmany` followed by "insert payments, debit balances" as a second step
+with no record in between. If the second step failed, or the process died between the two, the
+coins were gone and the balances untouched, so the next run paid the same miners again. There
+was also no way to tell afterwards whether a send had happened. The batch row closes both gaps
+and fails closed: when the pool cannot know whether coins moved, it stops paying and says so,
+rather than guessing either way. Finishing a `sent` batch before paying new balances is what
+prevents the double payment; the operator step is the only part that cannot be automated
+coin-agnostically (wallets differ in how to look a send up).
+
+**Deployment guard.** `PayoutManager` checks once that `payoutbatches` exists before the first
+payout; if it does not, it logs the migration to run at Fatal and skips payouts (balance updates
+still run) instead of failing every run with a raw database error.
+
+**Not covered.** The other payout handlers (Ethereum, Kaspa, Cryptonote, Ergo, Alephium, Beam,
+Conceal, Warthog, Xelis, Zano) still persist directly after sending; the base helpers are there
+for them and the change per handler is the same shape as the Bitcoin one.

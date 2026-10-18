@@ -65,6 +65,7 @@ public partial class MiningcoreMapper
     public partial Entities.AuxBlock ToEntity(Model.AuxBlock block);
     public partial Entities.Balance ToEntity(Model.Balance balance);
     public partial Entities.Payment ToEntity(Model.Payment payment);
+    public partial Entities.PayoutBatch ToEntity(Model.PayoutBatch batch);
     public partial Entities.MinerSettings ToEntity(Model.MinerSettings settings);
     public partial Entities.PoolStats ToEntity(Model.PoolStats stats);
 
@@ -77,6 +78,7 @@ public partial class MiningcoreMapper
     public partial Model.AuxBlock ToModel(Entities.AuxBlock block);
     public partial Model.Balance ToModel(Entities.Balance balance);
     public partial Model.Payment ToModel(Entities.Payment payment);
+    public partial Model.PayoutBatch ToModel(Entities.PayoutBatch batch);
     public partial Model.BalanceChange ToModel(Entities.BalanceChange change);
     public partial Model.PoolStats ToModel(Entities.PoolStats stats);
     public partial Model.MinerSettings ToModel(Entities.MinerSettings settings);
@@ -170,6 +172,7 @@ public partial class MiningcoreMapper
     // ------------------------------------------------------------------
 
     private static string ToStatusString(Model.BlockStatus status) => status.ToString().ToLowerInvariant();
+    private static string ToStatusString(Model.PayoutBatchStatus status) => status.ToString().ToLowerInvariant();
 
     // ------------------------------------------------------------------
     // Pool configuration -> API (hand-written: renames, computed members, and copies
