@@ -525,6 +525,31 @@ public class BitcoinJob
             return blockHeader.ToBytes();
     }
 
+    private static string lastTargetMismatchKey;
+
+    private void WarnOnceIfTargetDisagrees(Target bitsTarget)
+    {
+        if(string.IsNullOrEmpty(BlockTemplate.Target))
+            return;
+
+        try
+        {
+            if(new uint256(BlockTemplate.Target) == bitsTarget.ToUInt256())
+                return;
+
+            var key = BlockTemplate.Bits + ":" + BlockTemplate.Target;
+            if(lastTargetMismatchKey == key)
+                return;
+
+            lastTargetMismatchKey = key;
+            logger.Warn(() => $"Block template 'target' {BlockTemplate.Target} does not match 'bits' {BlockTemplate.Bits}; using bits for difficulty and block target");
+        }
+        catch(Exception)
+        {
+            // unparseable target: bits is authoritative anyway
+        }
+    }
+
     private static bool IsShareDifficultyAcceptable(double shareDiff, double requiredDifficulty)
     {
         // Some miners and daemons can report work that is slightly under the pool's exact target
@@ -582,7 +607,9 @@ public class BitcoinJob
         {
             BlockHeight = BlockTemplate.Height,
             NetworkDifficulty = Difficulty,
-            Difficulty = stratumDifficulty / shareMultiplier,
+            // a share inside the tolerance band below the worker's difficulty is credited what its hash
+            // actually proved rather than the full stratum difficulty (daemon units, see DifficultyUnits)
+            Difficulty = Math.Min(stratumDifficulty, shareDiff) / shareMultiplier,
             // daemon units, like Difficulty and NetworkDifficulty: shareDiff carries the stratum
             // share multiplier for the comparison with the worker's stratum difficulty above, and
             // the multiplier is a display convention that must not reach the database
@@ -1168,7 +1195,12 @@ public class BitcoinJob
 
         scriptSigFinalBytes = new Script(Op.GetPushOp(Encoding.UTF8.GetBytes(coinbaseString))).ToBytes();
 
-        Difficulty = new Target(System.Numerics.BigInteger.Parse(BlockTemplate.Target, NumberStyles.HexNumber)).Difficulty;
+        // Difficulty comes from "bits", like the block target further down: some daemons (DGB v9)
+        // return "target" in the wrong byte order, and a job whose difficulty and target disagree
+        // records wrong network difficulty on every share. A disagreeing "target" is logged once.
+        var bitsTarget = new Target(BlockTemplate.Bits.HexToByteArray());
+        Difficulty = bitsTarget.Difficulty;
+        WarnOnceIfTargetDisagrees(bitsTarget);
 
         extraNoncePlaceHolderLength = BitcoinConstants.ExtranoncePlaceHolderLength;
         this.isPoS = isPoS;
