@@ -444,6 +444,11 @@ public class BitcoinPool : PoolBase, IAuxMiningPool
 
     public override double ShareMultiplier => coin.ShareMultiplier;
 
+    // shares.difficulty is stored as stratumDifficulty / shareMultiplier, the unit block and miner effort divide
+    // by networkdifficulty, so pool effort needs no further factor (it used to multiply by the share multiplier,
+    // making scrypt pools read 65536x too high)
+    public override double EffortShareConstant => 1;
+
     #region Overrides
 
     public override void Configure(PoolConfig pc, ClusterConfig cc)

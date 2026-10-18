@@ -1344,7 +1344,25 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                         var mergedMiningHash = block.AuxBlockHash;
                         block.AuxBlockHash = found.Value.Hash;
                         block.BlockHeight = (ulong) found.Value.Height;
-                        await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
+
+                        try
+                        {
+                            await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
+                        }
+                        catch(Exception ex) when(ex is Npgsql.PostgresException { SqlState: Npgsql.PostgresErrorCodes.UniqueViolation })
+                        {
+                            // The same RSK block is already recorded under its real hash. This row is a duplicate
+                            // submission of the same merged-mining work (the in-memory claim set is empty after a
+                            // restart, so the work can be submitted twice). Keep it as an orphan under its own hash
+                            // instead of letting the unique index abort the whole confirmation pass every tick.
+                            logger.Warn(() => $"[rsk-confirm] Block id={block.Id} resolves to {found.Value.Hash[..Math.Min(8, found.Value.Hash.Length)]}…, which is already recorded; marking the duplicate orphaned");
+                            block.AuxBlockHash = mergedMiningHash;
+                            block.Status = BlockStatus.Orphaned;
+                            block.ConfirmationProgress = 0;
+                            await cf.RunTx(async (con, tx) => await auxBlockRepo.UpdateAsync(con, tx, block));
+                            continue;
+                        }
+
                         logger.Info(() => $"[rsk-confirm] Resolved {mergedMiningHash[..Math.Min(8, mergedMiningHash.Length)]}… → block {found.Value.Hash[..Math.Min(8, found.Value.Hash.Length)]}… at height {found.Value.Height}");
                         continue;
                     }

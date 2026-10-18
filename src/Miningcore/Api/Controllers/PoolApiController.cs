@@ -101,7 +101,7 @@ public class PoolApiController : ApiControllerBase
                 if(lastBlockTime.HasValue && pool != null)
                 {
                     var startTime = lastBlockTime.Value;
-                    var poolEffort = await cf.Run(con => shareRepo.GetEffortBetweenCreatedAsync(con, config.Id, startTime, clock.Now, ct));
+                    var poolEffort = await cf.Run(con => shareRepo.GetEffortBetweenCreatedAsync(con, config.Id, pool.EffortShareConstant, startTime, clock.Now, ct));
                     if(poolEffort.HasValue)
                         result.PoolEffort = poolEffort.Value;
                 }
@@ -189,7 +189,7 @@ public class PoolApiController : ApiControllerBase
         if(lastBlockTime.HasValue && poolInstance != null)
         {
             var startTime = lastBlockTime.Value;
-            var poolEffort = await cf.Run(con => shareRepo.GetEffortBetweenCreatedAsync(con, pool.Id, startTime, clock.Now, ct));
+            var poolEffort = await cf.Run(con => shareRepo.GetEffortBetweenCreatedAsync(con, pool.Id, poolInstance.EffortShareConstant, startTime, clock.Now, ct));
             if(poolEffort.HasValue)
                 response.Pool.PoolEffort = poolEffort.Value;
         }
@@ -244,6 +244,7 @@ public class PoolApiController : ApiControllerBase
         string poolId, [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] uint topMinersRange = 24)
     {
         pageSize = ClampPageSize(pageSize);
+        page = ClampPage(page);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -263,6 +264,7 @@ public class PoolApiController : ApiControllerBase
         string poolId, [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
     {
         pageSize = ClampPageSize(pageSize);
+        page = ClampPage(page);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -302,6 +304,7 @@ public class PoolApiController : ApiControllerBase
         string poolId, [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
     {
         pageSize = ClampPageSize(pageSize);
+        page = ClampPage(page);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -345,6 +348,7 @@ public class PoolApiController : ApiControllerBase
         string poolId, [FromQuery] int page, [FromQuery] int pageSize = 15)
     {
         pageSize = ClampPageSize(pageSize);
+        page = ClampPage(page);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -376,6 +380,7 @@ public class PoolApiController : ApiControllerBase
         string poolId, [FromQuery] int page, [FromQuery] int pageSize = 15)
     {
         pageSize = ClampPageSize(pageSize);
+        page = ClampPage(page);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -470,6 +475,7 @@ public class PoolApiController : ApiControllerBase
         string poolId, string address, [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
     {
         pageSize = ClampPageSize(pageSize);
+        page = ClampPage(page);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -515,6 +521,7 @@ public class PoolApiController : ApiControllerBase
         string poolId, string address, [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
     {
         pageSize = ClampPageSize(pageSize);
+        page = ClampPage(page);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -564,6 +571,7 @@ public class PoolApiController : ApiControllerBase
         string poolId, string address, [FromQuery] int page, [FromQuery] int pageSize = 15)
     {
         pageSize = ClampPageSize(pageSize);
+        page = ClampPage(page);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -601,6 +609,7 @@ public class PoolApiController : ApiControllerBase
         string poolId, string address, [FromQuery] int page, [FromQuery] int pageSize = 15)
     {
         pageSize = ClampPageSize(pageSize);
+        page = ClampPage(page);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -642,6 +651,7 @@ public class PoolApiController : ApiControllerBase
         string poolId, string address, [FromQuery] int page, [FromQuery] int pageSize = 15)
     {
         pageSize = ClampPageSize(pageSize);
+        page = ClampPage(page);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -664,6 +674,7 @@ public class PoolApiController : ApiControllerBase
         string poolId, string address, [FromQuery] int page, [FromQuery] int pageSize = 15)
     {
         pageSize = ClampPageSize(pageSize);
+        page = ClampPage(page);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -690,6 +701,7 @@ public class PoolApiController : ApiControllerBase
         string poolId, string address, [FromQuery] int page, [FromQuery] int pageSize = 15)
     {
         pageSize = ClampPageSize(pageSize);
+        page = ClampPage(page);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -711,6 +723,7 @@ public class PoolApiController : ApiControllerBase
         string poolId, string address, [FromQuery] int page, [FromQuery] int pageSize = 15)
     {
         pageSize = ClampPageSize(pageSize);
+        page = ClampPage(page);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -874,6 +887,7 @@ public class PoolApiController : ApiControllerBase
         string poolId, [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
     {
         pageSize = ClampPageSize(pageSize);
+        page = ClampPage(page);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -894,6 +908,7 @@ public class PoolApiController : ApiControllerBase
         string poolId, string address, [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
     {
         pageSize = ClampPageSize(pageSize);
+        page = ClampPage(page);
         var pool = GetPool(poolId);
         var ct = HttpContext.RequestAborted;
 
@@ -936,7 +951,7 @@ public class PoolApiController : ApiControllerBase
             double? poolEffort = null;
             if(lastBlockTime.HasValue && poolInstance != null)
             {
-                var effort = await cf.Run(con => shareRepo.GetEffortBetweenCreatedAsync(con, config.Id, lastBlockTime.Value, clock.Now, ct));
+                var effort = await cf.Run(con => shareRepo.GetEffortBetweenCreatedAsync(con, config.Id, poolInstance.EffortShareConstant, lastBlockTime.Value, clock.Now, ct));
                 if(effort.HasValue)
                     poolEffort = effort.Value;
             }

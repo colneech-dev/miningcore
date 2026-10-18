@@ -477,6 +477,7 @@ Pool Fee:               {(poolConfig.RewardRecipients?.Any() == true ? poolConfi
 
     public abstract double HashrateFromShares(double shares, double interval);
     public virtual double ShareMultiplier => 1;
+    public virtual double EffortShareConstant => ShareMultiplier;
 
     public virtual async Task RunAsync(CancellationToken ct)
     {

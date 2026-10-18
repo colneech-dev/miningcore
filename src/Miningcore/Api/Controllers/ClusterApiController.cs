@@ -42,6 +42,8 @@ public class ClusterApiController : ApiControllerBase
     public async Task<Responses.Block[]> PageBlocksPagedAsync(
         [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
     {
+        pageSize = ClampPageSize(pageSize);
+        page = ClampPage(page);
         var ct = HttpContext.RequestAborted;
         var blockStates = state is { Length: > 0 } ?
             state :
@@ -89,6 +91,8 @@ public class ClusterApiController : ApiControllerBase
     public async Task<Responses.AuxBlock[]> PageAuxBlocksAsync(
         [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
     {
+        pageSize = ClampPageSize(pageSize);
+        page = ClampPage(page);
         var ct = HttpContext.RequestAborted;
         var blockStates = state is { Length: > 0 } ?
             state :

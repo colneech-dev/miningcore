@@ -28,6 +28,9 @@ public abstract class ApiControllerBase : ControllerBase
 
     protected static int ClampPageSize(int pageSize) => Math.Clamp(pageSize, 1, MaxPageSize);
 
+    /// <summary>Page index bound: a negative page is a negative OFFSET (database error) and page * pageSize is an unchecked int multiply.</summary>
+    protected static int ClampPage(int page) => Math.Clamp(page, 0, 1_000_000);
+
     protected PoolConfig GetPoolNoThrow(string poolId)
     {
         if(string.IsNullOrEmpty(poolId))

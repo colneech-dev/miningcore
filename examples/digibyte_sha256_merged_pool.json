@@ -24,10 +24,11 @@
             "database": "miningcore"
         }
     },
+    "//shareRecoveryFile": "top-level cluster setting; recovered-aux-blocks.jsonl is written next to it",
+    "shareRecoveryFile": "recovered-shares.txt",
     "paymentProcessing": {
         "enabled": true,
-        "interval": 600,
-        "shareRecoveryFile": "recovered-shares.txt"
+        "interval": 600
     },
     "api": {
         "enabled": true,

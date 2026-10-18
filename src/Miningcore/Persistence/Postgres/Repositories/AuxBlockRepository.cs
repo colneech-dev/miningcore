@@ -149,7 +149,7 @@ public class AuxBlockRepository : IAuxBlockRepository
         const string query = @"SELECT c.chainid, c.total, c.today, c.lastcreated, r.reward AS lastreward
             FROM (SELECT chainid, COUNT(*) AS total, COUNT(*) FILTER (WHERE created >= @since) AS today, MAX(created) AS lastcreated
                   FROM auxblocks WHERE poolid = @poolId GROUP BY chainid) c
-            LEFT JOIN LATERAL (SELECT reward FROM auxblocks WHERE poolid = @poolId AND chainid = c.chainid AND reward IS NOT NULL
+            LEFT JOIN LATERAL (SELECT reward FROM auxblocks WHERE poolid = @poolId AND chainid = c.chainid AND reward IS NOT NULL AND status <> 'orphaned'
                   ORDER BY created DESC LIMIT 1) r ON true";
 
         return (await con.QueryAsync<Model.Projections.AuxChainSummary>(new CommandDefinition(query, new { poolId, since }, cancellationToken: ct))).ToArray();

@@ -60,6 +60,29 @@ public class BitcoinJobTests : TestBase
     }
 
     [Fact]
+    public void Share_And_Hash_Difficulty_Are_In_Daemon_Units_Whatever_The_Share_Multiplier()
+    {
+        // The same header processed as a multiplier-1 coin and as a 65536 (scrypt-style) coin. The stratum share
+        // multiplier is a display convention for miners; it must not reach the stored values (DifficultyUnits).
+        const double multiplier = 65536;
+        var (job1, worker1) = CreateJob(1);
+        var (job2, worker2) = CreateJob(multiplier);
+
+        var (plain, _) = job1.ProcessShare(worker1, "01000000", "63445774", "51036775");
+        var (scaled, _) = job2.ProcessShare(worker2, "01000000", "63445774", "51036775");
+
+        Assert.True(plain.IsBlockCandidate && scaled.IsBlockCandidate);
+
+        // hash and network difficulty are identical: both are diff1 / value, with no multiplier
+        Assert.Equal(plain.HashDifficulty, scaled.HashDifficulty, 9);
+        Assert.Equal(plain.NetworkDifficulty, scaled.NetworkDifficulty, 9);
+
+        // the share's own difficulty is the worker's stratum difficulty divided by the multiplier
+        Assert.Equal(0.01, plain.Difficulty, 12);
+        Assert.Equal(0.01 / multiplier, scaled.Difficulty, 12);
+    }
+
+    [Fact]
     public void Job_Params_Stripe_Rolling_Bits_From_Version()
     {
         var job = new BitcoinJob();
@@ -174,7 +197,7 @@ public class BitcoinJobTests : TestBase
         Assert.DoesNotContain(fabeMagic, coinbaseInitialHex, StringComparison.OrdinalIgnoreCase);
     }
 
-    private (BitcoinJob, StratumConnection) CreateJob()
+    private (BitcoinJob, StratumConnection) CreateJob(double? shareMultiplier = null)
     {
         var job = new BitcoinJob();
         var coin = (BitcoinTemplate) ModuleInitializer.CoinTemplates["dash"];
@@ -197,7 +220,7 @@ public class BitcoinJobTests : TestBase
         worker.SetContext(context);
 
         job.Init(blockTemplate, "1", pc, null, new ClusterConfig(), clock, poolAddressDestination, network, false,
-            coin.ShareMultiplier, coin.CoinbaseHasherValue, coin.HeaderHasherValue, coin.BlockHasherValue);
+            shareMultiplier ?? coin.ShareMultiplier, coin.CoinbaseHasherValue, coin.HeaderHasherValue, coin.BlockHasherValue);
 
         return (job, worker);
     }

@@ -343,3 +343,42 @@ recovery.
   difficulty, which is exactly what is divided out.
 - Block candidates are credited `min(stratumDifficulty, hashDifficulty)` too, not only shares in
   the tolerance band; a candidate below the worker's difficulty is credited what it proved.
+
+## 2026-10-18 — Review round 3 (API and persistence): corrections
+
+**Decision.**
+- **Backfill is keyed on creation time, not on the data.** `backfill_difficulty_units.sh` now takes a
+  required cutoff (when the new build began writing) and converts rows created before it, once per pool
+  (a `schema_fixes` marker row in the same transaction), across any number of coin template files, with
+  pool ids SQL-escaped. The earlier guard (`difficulty / networkdifficulty >= multiplier`) was wrong: about
+  1 in 256 correct rows qualifies at a multiplier of 256, aux chains with small network difficulty or an
+  unrecorded one are misclassified either way, and a re-run divided correct rows again.
+- **Pool effort keeps the share multiplier outside the Bitcoin family.** `IMiningPool.EffortShareConstant`
+  is 1 for `BitcoinPool` (whose shares are stored as `stratumDifficulty / shareMultiplier`, the unit block
+  effort divides by) and the share multiplier everywhere else, which is what those pools returned before.
+  Dropping the multiplier for every family, as the earlier entry did, made Ergo pool effort 256x too low:
+  Ergo, Kaspa and Alephium scale block effort in `AdjustBlockEffort`. The web UI never divided those pools
+  (their multiplier is a constant in the pool class, not in `coins.json`), so nothing changes for the UI.
+- `pageSize` and `page` are clamped on the two cluster endpoints (`/api/blocks`, `/api/auxblocks`) as well,
+  so the earlier "all paging actions" is now true; a negative or huge `page` no longer reaches `OFFSET`.
+- The RSK confirmer no longer stalls on a duplicate: if resolving a row to its real hash hits the unique
+  index (the same merged-mining work submitted twice, possible after a restart empties the in-memory claim
+  set), the row is marked orphaned under its own hash instead of failing the whole pass every tick.
+- `/api/summary`: an orphaned aux block no longer supplies a chain's last reward.
+- Miner/pool effort SQL guards `networkdifficulty = 0` with `NULLIF`.
+- The test that needs no native library is no longer marked as needing one; `SchemaDriftTests` covers
+  UPDATE statements as well as INSERT/COPY; a job-level test pins that share and hash difficulty are the same
+  for a multiplier-1 and a 65536 coin (verified to fail if the multiplier leaks back in).
+- The merged-mining example puts `shareRecoveryFile` at the top level, where it is read.
+
+**Corrections to earlier entries.**
+- Moving the admin state changes from GET to POST removes cacheable and prefetchable mutations. It is not
+  CSRF protection: a cross-site form POST is a simple request. The protection is the admin IP whitelist
+  (and the optional token); add an anti-forgery check if admin is ever exposed beyond localhost.
+- The "all 15 paging actions" and "pool effort is `difficulty / networkdifficulty`" statements applied to
+  the Bitcoin family only (see above).
+
+**Known limits.** `DifficultyUnitsTests` and the job test cover the helper and the Bitcoin job; the
+effort SQL, `ToBlock` and the backfill are verified by reading and by running the script's output through
+review, not against a database. Native-library tests are skipped on machines without the libraries; CI
+builds them, local green runs are weaker than they look.

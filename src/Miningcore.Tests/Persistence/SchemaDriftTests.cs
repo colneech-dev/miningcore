@@ -80,11 +80,26 @@ public class SchemaDriftTests
 
                 yield return (Path.GetFileName(file), m.Groups[1].Value, columns);
             }
+
+            // UPDATE table SET col = ..., col = ... WHERE: the columns before each '='. Splitting on ',' also cuts
+            // inside COALESCE(a, b); those fragments have no '=' at their start and are skipped.
+            foreach(Match m in Regex.Matches(source, @"UPDATE\s+(\w+)\s+SET\s+([^""]*?)\s+WHERE",
+                        RegexOptions.IgnoreCase | RegexOptions.Singleline))
+            {
+                var columns = m.Groups[2].Value
+                    .Split(',')
+                    .Select(part => Regex.Match(part, @"^\s*(\w+)\s*="))
+                    .Where(x => x.Success)
+                    .Select(x => x.Groups[1].Value)
+                    .ToArray();
+
+                yield return (Path.GetFileName(file), m.Groups[1].Value, columns);
+            }
         }
     }
 
     [Fact]
-    public void Repository_inserts_only_name_columns_that_createdb_creates()
+    public void Repository_writes_only_name_columns_that_createdb_creates()
     {
         var root = FindRepoRoot();
         var schema = ParseCreateTables(File.ReadAllText(Path.Combine(root, CreateDbScript)));
@@ -102,7 +117,7 @@ public class SchemaDriftTests
             }
 
             foreach(var column in columns.Where(c => !known.Contains(c)))
-                problems.Add($"{file}: {table}.{column} is written but not created by createdb.sql");
+                problems.Add($"{file}: {table}.{column} is written (INSERT, COPY or UPDATE) but not created by createdb.sql");
         }
 
         Assert.True(problems.Count == 0, "Schema drift between repositories and createdb.sql:" + Environment.NewLine + string.Join(Environment.NewLine, problems));

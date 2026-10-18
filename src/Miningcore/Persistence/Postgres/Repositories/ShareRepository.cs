@@ -75,21 +75,19 @@ public class ShareRepository : IShareRepository
         return con.QuerySingleAsync<long>(new CommandDefinition(query, new { poolId, miner}, tx, cancellationToken: ct));
     }
 
-    public Task<double?> GetEffortBetweenCreatedAsync(IDbConnection con, string poolId, DateTime start, DateTime end, CancellationToken ct)
+    public Task<double?> GetEffortBetweenCreatedAsync(IDbConnection con, string poolId, double shareConst, DateTime start, DateTime end, CancellationToken ct)
     {
-        // shares.difficulty is already normalised to daemon units (BitcoinJob stores
-        // stratumDifficulty / shareMultiplier) and networkdifficulty is in the same units, so the
-        // ratio is the effort. This used to multiply by the pool's share multiplier again, which made
-        // poolEffort 65536x too high on scrypt pools while block and miner effort (same formula,
-        // no multiplier) were right. The web UI had to divide it back out from coins.json.
-        const string query = "SELECT SUM(difficulty / NULLIF(networkdifficulty, 0)) FROM shares WHERE poolid = @poolId AND created > @start AND created < @end";
+        // shareConst is the pool's EffortShareConstant: 1 for the Bitcoin family, whose shares.difficulty is already
+        // normalised to daemon units (BitcoinJob stores stratumDifficulty / shareMultiplier), and the share
+        // multiplier for the families that scale block effort in their payout handler. NULLIF avoids a division by zero.
+        const string query = "SELECT SUM((difficulty * @shareConst) / NULLIF(networkdifficulty, 0)) FROM shares WHERE poolid = @poolId AND created > @start AND created < @end";
 
-        return con.QuerySingleAsync<double?>(new CommandDefinition(query, new { poolId, start, end }, cancellationToken: ct));
+        return con.QuerySingleAsync<double?>(new CommandDefinition(query, new { poolId, shareConst, start, end }, cancellationToken: ct));
     }
 
     public Task<double?> GetMinerEffortBetweenCreatedAsync(IDbConnection con, string poolId, string miner, DateTime start, DateTime end, CancellationToken ct)
     {
-        const string query = "SELECT SUM(difficulty / networkdifficulty) FROM shares WHERE poolid = @poolId AND miner = @miner AND created > @start AND created < @end";
+        const string query = "SELECT SUM(difficulty / NULLIF(networkdifficulty, 0)) FROM shares WHERE poolid = @poolId AND miner = @miner AND created > @start AND created < @end";
 
         return con.QuerySingleAsync<double?>(new CommandDefinition(query, new { poolId, miner, start, end }, cancellationToken: ct));
     }
@@ -117,7 +115,7 @@ public class ShareRepository : IShareRepository
 
     public Task<double?> GetMinerShareDifficultyBetweenAsync(IDbConnection con, string poolId, string miner, DateTime start, DateTime end, CancellationToken ct)
     {
-        const string query = "SELECT SUM(difficulty / networkdifficulty) FROM shares WHERE poolid = @poolId AND miner = @miner AND created > @start AND created < @end";
+        const string query = "SELECT SUM(difficulty / NULLIF(networkdifficulty, 0)) FROM shares WHERE poolid = @poolId AND miner = @miner AND created > @start AND created < @end";
 
         return con.QuerySingleAsync<double?>(new CommandDefinition(query, new { poolId, miner, start, end }, cancellationToken: ct));
     }

@@ -35,7 +35,8 @@ public class CrytonoteTests : TestBase
         Assert.Equal(42ul, result);
     }
 
-    [NativeLibFact("libcryptonote")]
+    // Contract.Requires throws before the P/Invoke, so this one needs no native library
+    [Fact]
     public void Cryptonote_DecodeAddress_Should_Throw_On_Null_Or_Empty_Argument()
     {
         Assert.Throws<ArgumentException>(() => CryptonoteBindings.DecodeAddress(null));

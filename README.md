@@ -20,7 +20,7 @@ This fork adds the following changes on top of upstream:
 - **Aux chain options** — `decimals` (default 8) and `diff1` per `auxChains[]` entry
 - **Merged mining example** — `examples/digibyte_sha256_merged_pool.json` covers `auxChains`, `rskChain` and `hathorChain`
 - **Tests without native libraries** — `dotnet test` skips the hashing tests that need `libcryptonight`, `libcryptonote`, `librandomx` or `librandomarq` when they are not built, with the reason in the output
-- All stored difficulties are in daemon units (no stratum share multiplier); see `docs/decisions.md`. Pools with a share multiplier other than 1 that recorded blocks before Oct 2026 should run `src/Miningcore/Persistence/Postgres/Scripts/backfill_difficulty_units.sh <config.json> <coins.json> | psql -d miningcore` once
+- All stored difficulties are in daemon units (no stratum share multiplier); see `docs/decisions.md`. Pools with a share multiplier other than 1 that recorded blocks before this change should run `src/Miningcore/Persistence/Postgres/Scripts/backfill_difficulty_units.sh <config.json> <cutoff> <coins.json>... | psql -d miningcore` once, where `<cutoff>` is when the new build started writing (ISO 8601; rows created before it are converted, each pool at most once)
 
 ---
 
