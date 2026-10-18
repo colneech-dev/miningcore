@@ -95,3 +95,44 @@ nothing is ever submitted. These warnings make that visible in the log.
 
 **Why.** `main` became the default branch; `rsk` and `dev` were identical and about to be
 retired, and the deploy must not depend on a branch that disappears.
+
+## 2026-10-18 — Ship the schema for the hash-difficulty columns, and test for drift
+
+**Decision.** `createdb.sql` and `add_auxblocks.sql` now create `blocks.difficulty`,
+`auxblocks.difficulty` and `auxblocks.networkdifficulty`; `add_block_difficulty.sql` adds them
+to existing databases; `SchemaDriftTests` fails the build when a repository INSERT or COPY
+names a column `createdb.sql` does not create, or when a fork-added column has no
+`add_*.sql` migration.
+
+**Why.** f7aa692c and dbb50b63 added the columns to the entities and INSERT statements only.
+On a database built from the scripts every block insert failed with "column does not exist",
+and because `ShareRecorder` inserts the block inside the share batch's transaction, the whole
+batch failed, tripped the circuit breaker and went to the recovery file. Production only
+worked because the columns had been added by hand. The test makes the next such drift a
+compile-time-cheap failure instead of a production incident.
+
+## 2026-10-18 — Release the aux-submit claim when a submit does not succeed
+
+**Decision.** `submittedAuxHashes` still claims an aux block before submitting (two shares that
+meet the same aux target in quick succession must not both submit), but the claim is removed
+again on RPC error, explicit rejection, exception, or when no manager owns the block.
+
+**Why.** The claim was never released, so one transient daemon failure made every later share
+for the same aux block skip as a "duplicate" and the block was lost. Re-submitting a block the
+daemon already rejected is cheap and rare: `RefreshAsync` is invalidated after each submit, so
+later shares normally carry a new aux block anyway.
+
+## 2026-10-18 — Record RSK blocks by merged-mining hash and resolve them in the confirmer
+
+**Decision.** After `mnr_submitBitcoinBlock` succeeds the record stores `blockHashForMergedMining`
+with `BlockHeight = null` unless the node's `latest` block already carries it.
+`ConfirmRskBlocksAsync` scans recent RSK blocks (incrementally, cached, up to 2000 blocks for
+old records) for a matching `hashForMergedMining`, then writes the real hash and height.
+`AuxBlockRepository.UpdateAsync` therefore also updates `auxblockhash`. A record that has not
+appeared on-chain after two hours, with the whole window scanned, is orphaned. Comparisons
+accept either hash so legacy rows are upgraded instead of orphaned.
+
+**Why.** The old code stored `eth_blockNumber` (the tip at submit time, not our block) as the
+height, so the confirmer compared the tip's hash with our merged-mining hash, found them
+different by construction, and orphaned every RSK block. The height-heal path never ran
+because the height was not null.

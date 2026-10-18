@@ -24,6 +24,7 @@ CREATE TABLE blocks
 	poolid TEXT NOT NULL,
 	blockheight BIGINT NOT NULL,
 	networkdifficulty DOUBLE PRECISION NOT NULL,
+	difficulty DOUBLE PRECISION NULL,
 	status TEXT NOT NULL,
     type TEXT NULL,
     confirmationprogress FLOAT NOT NULL DEFAULT 0,
@@ -57,6 +58,8 @@ CREATE TABLE auxblocks
     worker                  TEXT            NULL,
     source                  TEXT            NULL,
     submittedvia            TEXT            NULL,
+    difficulty              DOUBLE PRECISION NULL,
+    networkdifficulty       DOUBLE PRECISION NULL,
     created                 TIMESTAMPTZ     NOT NULL
 );
 
