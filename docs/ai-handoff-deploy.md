@@ -33,15 +33,20 @@ right = commits only on the branch).
 | Branch | Role | Commits only on main / only on branch |
 |---|---|---|
 | `main` | What the owner runs today and where upstream-style fixes land. Still .NET 8 and AutoMapper. | reference |
-| `ccr-0400960a-70n7cb` | Stage 0. .NET 8 to .NET 10, AutoMapper replaced by Mapperly, dependency security fixes, OdoCrypt test vector, CI audit gate, `docs/decisions.md` started. Base of the two branches below. | 7 / 8 |
-| `fix/negative-review` | Stage 0 plus the fixes from an adversarial review: merged mining, security hardening, API, schema migrations, difficulty units. Has no payout batches. | 7 / 24 |
-| `fix/payout-idempotency` | Everything above plus idempotent payouts (a payout batch row is written before coins leave the wallet). This is the tip that contains all the work. | 7 / 29 |
-| `vmesh` | Owner's own line: child-template merged mining, CorgiCoin, legacy-daemon fallbacks, duplicate-block orphaning. Currently identical to `main`. | 0 / 0 |
-| `dev`, `rsk` | Older owner branches, 8 commits behind `main` and nothing ahead. Not part of this rollout. Ignore. | 8 / 0 |
+| `ccr-0400960a-70n7cb` | Stage 0. .NET 8 to .NET 10, AutoMapper replaced by Mapperly, dependency security fixes, OdoCrypt test vector, CI audit gate, `docs/decisions.md` started. Base of the two branches below. | 8 / 8 |
+| `fix/negative-review` | Stage 0 plus the fixes from an adversarial review: merged mining, security hardening, API, schema migrations, difficulty units. Has no payout batches. | 0 / 25 (contains `main`) |
+| `fix/payout-idempotency` | Everything above plus idempotent payouts (a payout batch row is written before coins leave the wallet). This is the tip that contains all the work. | 0 / 30 (contains `main`) |
+| `vmesh` | Owner's own line: child-template merged mining, CorgiCoin, legacy-daemon fallbacks, duplicate-block orphaning. Same as `main` before the handoff brief was added. | 1 / 0 |
+| `dev`, `rsk` | Older owner branches, 8 commits behind `main` and nothing ahead. Not part of this rollout. Ignore. | 9 / 0 |
 
-The three server work branches are stacked (verified with `git merge-base --is-ancestor`): `ccr-...` is inside `fix/negative-review`, which is inside
-`fix/payout-idempotency`. None of them contains the 7 newest commits on `main` (see section 2).
-Never deploy from `main` expecting the work, and never deploy a work branch directly.
+The three server work branches are stacked (verified with `git merge-base --is-ancestor`):
+`ccr-0400960a-70n7cb` is inside `fix/negative-review`, which is inside `fix/payout-idempotency`.
+On 2026-10-18 `main` was merged into `fix/negative-review` and `fix/payout-idempotency` (merge commits,
+no history rewritten), so both now contain everything on `main`. `ccr-0400960a-70n7cb` was NOT updated;
+it is only a stage 0 base. Never deploy `main` expecting the work, and never deploy
+`ccr-0400960a-70n7cb`.
+
+**Deploy branches:** stage A is `fix/negative-review`, stage B is `fix/payout-idempotency`.
 
 ### Miningcore-Web-UI
 
@@ -49,10 +54,11 @@ Never deploy from `main` expecting the work, and never deploy a work branch dire
 |---|---|---|
 | `main` | The dashboard the owner runs today. | reference |
 | `ccr-0400960a-70n7cb` | Early dashboard work: npm security fixes (proxy-addr, qs, esbuild, Node 22), a CI gate on high npm advisories, phone layout fixes, a decision log. | 3 / 4 |
-| `fix/negative-review` | The dashboard changes that pair with the server fixes (admin gate, proxy trust, API client, tests). Contains the previous branch (verified). | 3 / 10 |
+| `fix/negative-review` | The dashboard changes that pair with the server fixes (admin gate, proxy trust, API client, tests). Contains the previous branch (verified). | 0 / 11 (contains `main`) |
 
-Web UI `main` has also moved: 3 commits (logos, explorer links and tickers for new coins) are not on
-the fix branch. The same rule applies: the human must supply a deploy branch that contains `main`.
+Web UI `main` had moved by 3 commits (logos, explorer links and tickers for new coins). It was merged
+into the web UI `fix/negative-review` on 2026-10-18, so that branch is the web UI deploy branch.
+The web UI `ccr-0400960a-70n7cb` branch was not updated; do not deploy it.
 
 ### Which server branch goes with which UI branch
 
@@ -63,26 +69,34 @@ Read these in the miningcore checkout first; they are the source of truth and ex
 `docs/decisions.md` (dated decision log), `README.md` (the "Colneech Customisations" section),
 `CLAUDE.md`. The web UI repo has its own `docs/decisions.md` and `README.md`.
 
-## 2. Prerequisite that only the HUMAN can satisfy: `main` has moved
+## 2. `main` moves: check it before every deploy
 
-`origin/main` has 7 commits that these branches do not contain (a duplicate-block orphaning fix in the
-payout path, a child-template merged-mining path, CorgiCoin, legacy-daemon fallbacks). The deploy script
-does `git reset --hard origin/<branch>`, so deploying a fix branch directly would DROP those commits.
+`main` had 7 commits the work branches lacked (a duplicate-block orphaning fix in the payout path, a
+child-template merged-mining path, CorgiCoin, legacy-daemon fallbacks). The deploy script does
+`git reset --hard origin/<branch>`, so deploying a branch that lacks `main` would DROP those commits.
 
-A trial merge of the then-current `main` into `fix/payout-idempotency` was done: one trivial conflict, then it builds and
-passes 223 tests. The conflict is in `src/Miningcore/Blockchain/Bitcoin/AuxPoW/AuxPowManager.cs`: two
-adjacent field declarations (`lastFailureTicks` from the work, `children` and `childOrder` from main).
-Keep all three. Follow-up: main's child-template path calls `ResolveTarget(target, bits)`; change it to
-the overload with `out TargetResolution` followed by `LogTargetResolution(block, resolution)`, so an
-unusable target is reported. That follow-up is optional.
+That was fixed on 2026-10-18 by merging `main` into the two deploy branches. One conflict came up, in
+`src/Miningcore/Blockchain/Bitcoin/AuxPoW/AuxPowManager.cs`: two adjacent field declarations
+(`lastFailureTicks` from the work, `children` and `childOrder` from main). All three were kept. After the merge
+the server test suite passed (254 passed, 0 failed, 6 skipped on the payout tip; 236 passed on stage A).
+The 6 skipped tests need native libraries this build machine did not have. The web UI server tests passed
+(10 of 10). The web UI browser drive test could not run there because it loads React from a CDN that the
+build machine could not reach, so it was NOT run on the merged web UI; run it, or look at the dashboard,
+after deploying.
 
-Before you deploy anything, the HUMAN must tell you the name of a pushed branch that contains `main`
-plus the work they want. Verify it yourself:
+Optional follow-up, not done: main's child-template path calls `ResolveTarget(target, bits)`; it could
+use the overload with `out TargetResolution` followed by `LogTargetResolution(block, resolution)`, so an
+unusable target is reported.
+
+If `main` gets new commits later, the deploy branch will no longer contain it. Before you deploy, verify:
 
     git fetch origin
-    git merge-base --is-ancestor origin/main origin/<that-branch> && echo OK-CONTAINS-MAIN
+    git merge-base --is-ancestor origin/main origin/<DEPLOY_BRANCH> && echo OK-CONTAINS-MAIN
 
-If that does not print OK-CONTAINS-MAIN, stop. Call that branch `<DEPLOY_BRANCH>` below.
+If that does not print OK-CONTAINS-MAIN, stop and tell the HUMAN: `main` has moved and they must supply a
+branch that contains it. The check applies to both repositories. In the commands below, `<DEPLOY_BRANCH>`
+is `fix/payout-idempotency` (or `fix/negative-review` for stage A only) for the server, and
+`fix/negative-review` for the web UI.
 
 Recommended rollout (HUMAN decides): stage A the review fixes without payout batches, observe for a
 day, then stage B the payout-idempotency tip. If the human wants everything at once, that is fine; the
