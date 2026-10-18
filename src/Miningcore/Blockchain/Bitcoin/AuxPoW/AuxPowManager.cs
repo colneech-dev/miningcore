@@ -106,7 +106,10 @@ public class AuxPowManager : IDisposable
         if(!await fetchLock.WaitAsync(0))
             return;
 
-        var succeeded = false;
+        // Failure is recorded at the failure sites (an RPC error, an exception) and not inferred from the absence of a
+        // success marker: a refresh path that returns early on success (e.g. the child-template path merged from main)
+        // would otherwise be counted as a failure and delay the next, ZMQ-triggered refresh.
+        var failed = false;
 
         try
         {
@@ -124,6 +127,8 @@ public class AuxPowManager : IDisposable
                     logger.Debug(() => $"[{config.Id}] {method} failed: {response.Error.Message}");
                 else
                     logger.Warn(() => $"[{config.Id}] {method} failed: {response.Error.Message}");
+
+                failed = true;
                 return;
             }
 
@@ -145,13 +150,14 @@ public class AuxPowManager : IDisposable
 
             currentAuxBlock = block;
             Interlocked.Exchange(ref lastFetchTicks, DateTimeOffset.UtcNow.Ticks);
-            succeeded = true;
             auxBlockInvalidated = false;
 
             logger.Debug(() => $"[{config.Id}] AuxBlock refreshed: height={block.Height} target={block.Target}");
         }
         catch(Exception ex)
         {
+            failed = true;
+
             if(config.SilentErrors)
                 logger.Debug(() => $"[{config.Id}] {config.GetAuxBlockMethod} exception: {ex.Message}");
             else
@@ -159,7 +165,7 @@ public class AuxPowManager : IDisposable
         }
         finally
         {
-            if(!succeeded)
+            if(failed)
                 Interlocked.Exchange(ref lastFailureTicks, DateTimeOffset.UtcNow.Ticks);
 
             fetchLock.Release();
