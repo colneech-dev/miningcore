@@ -47,7 +47,6 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
     // never stalls a miner's mining.submit (see SubmitShareAsync / ProcessAuxSubmissionsAsync).
     private readonly Channel<(Share Share, BitcoinJob Job)> auxSubmitQueue =
         Channel.CreateUnbounded<(Share, BitcoinJob)>(new UnboundedChannelOptions { SingleReader = true });
-    private IDisposable auxRefreshSubscription;
     private IConnectionFactory cf;
     private IAuxBlockRepository auxBlockRepo;
 
@@ -900,14 +899,22 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                 continue;
             }
 
-            // Standard AuxPoW submission
-            var manager = auxPowManagers.FirstOrDefault(m => string.Equals(m.CurrentAuxBlock?.Hash, auxBlock.Hash, StringComparison.OrdinalIgnoreCase));
+            // Standard AuxPoW submission. The manager is found by chain id, not by "is this still the
+            // manager's current aux block": submissions now run on a background worker, so by the time one
+            // is processed the manager may already hold the next aux template, and matching on the current
+            // hash would drop a valid, already-mined block as "superseded". The aux daemon is the judge of
+            // whether the block is stale; it rejects a superseded one cheaply.
+            var manager = auxPowManagers.FirstOrDefault(m => m.Config.ChainId == auxBlock.ChainId)
+                ?? auxPowManagers.FirstOrDefault(m => string.Equals(m.CurrentAuxBlock?.Hash, auxBlock.Hash, StringComparison.OrdinalIgnoreCase));
             if(manager == null)
             {
-                logger.Debug(() => $"No manager found for aux block {auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]} — block likely superseded");
+                logger.Warn(() => $"No aux manager for chain id {auxBlock.ChainId} (block {auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]}); not submitted");
                 submittedAuxHashes.TryRemove(dedupKey, out _);
                 continue;
             }
+
+            if(!string.Equals(manager.CurrentAuxBlock?.Hash, auxBlock.Hash, StringComparison.OrdinalIgnoreCase))
+                logger.Debug(() => $"[{manager.Config.Id}] Submitting aux block {auxBlock.Hash[..Math.Min(16, auxBlock.Hash.Length)]} that is no longer the current template; the daemon decides whether it is still valid");
 
             try
             {
@@ -1056,12 +1063,28 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
         if(refreshers.Count == 0)
             return;
 
-        auxRefreshSubscription = Observable.Interval(TimeSpan.FromSeconds(1))
-            .Select(_ => Observable.FromAsync(() => Task.WhenAll(refreshers.Select(r => Guard(() => r(ct), ex => logger.Debug(ex))))))
-            .Concat()
-            .Subscribe(_ => { }, ex => logger.Error(ex, () => "Aux refresh loop terminated"));
-
-        ct.Register(() => auxRefreshSubscription?.Dispose());
+        // A plain loop: one pass, then a one second pause. Interval + Concat would have queued a deferred
+        // pass every second for as long as a daemon was slow (each pass can take the 10 s refresh
+        // timeout), draining only after the daemon recovered.
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while(!ct.IsCancellationRequested)
+                {
+                    await Task.WhenAll(refreshers.Select(r => Guard(() => r(ct), ex => logger.Debug(ex))));
+                    await Task.Delay(TimeSpan.FromSeconds(1), ct);
+                }
+            }
+            catch(OperationCanceledException)
+            {
+                // shutdown
+            }
+            catch(Exception ex)
+            {
+                logger.Error(ex, () => "Aux refresh loop terminated");
+            }
+        }, ct);
     }
 
     #region RSK confirmation

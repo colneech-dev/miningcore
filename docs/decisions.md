@@ -263,7 +263,7 @@ that report `target` in the wrong byte order, recording a wrong network difficul
 - Config validation rejects ports outside 1..65535, RSK or Hathor sections without daemons, and
   chain ids shared between aux, RSK and Hathor chains.
 
-**Why.** Each is a finding from the Oct 2026 negative review (`docs` of the session); none changes
+**Why.** Each is a finding from the Oct 2026 negative review; none changes
 behaviour for a correctly configured pool except the CORS method restriction and the admin
 endpoints' verb, both of which only affect clients that were mutating state through a browser.
 
@@ -296,3 +296,16 @@ DST change. The native-test change makes a plain `dotnet test` meaningful on a m
 **Not done.** The 37 `#pragma warning disable` directives (mostly CS4014, CS1591, CS3021,
 CS0612) are left; removing them needs the underlying warnings fixed one by one. The RVH/ANOK
 witness-commitment question needs those coins' consensus rules to settle.
+
+## 2026-10-18 — Self-review fixes: aux manager lookup by chain id, refresh loop without a backlog
+
+**Decision.** The aux submit worker finds the manager by `ChainId` and submits even when the
+manager has moved on to a newer template; the refresh loop is a plain loop with a one second
+pause instead of `Observable.Interval(...).Concat()`.
+
+**Why.** Both were introduced earlier the same day when aux refresh and submits moved off the hot
+paths. Looking the manager up by "is this still its current aux block" was harmless inline but,
+behind a queue, a submission processed after the next template arrived was dropped as
+"superseded": a valid mined block lost. The daemon is the right judge of staleness. The Rx loop
+queued one deferred pass per second while a daemon was slow, a backlog that only drained after
+recovery.
