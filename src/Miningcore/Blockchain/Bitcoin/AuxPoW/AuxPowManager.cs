@@ -116,11 +116,7 @@ public class AuxPowManager : IDisposable
         try
         {
             var method = config.GetAuxBlockMethod;
-            object args = method == "createauxblock" && !string.IsNullOrEmpty(config.Address)
-                ? new object[] { config.Address }
-                : method == "getblocktemplate"
-                    ? new object[] { new { rules = new[] { "segwit" } } }
-                    : null;
+            var args = BuildWorkRequestArgs(config);
 
             // a slow aux daemon must not hold the refresh loop for the full default timeout
             var response = await rpc.ExecuteAsync<JToken>(logger, method, ct, args, timeout: TimeSpan.FromSeconds(10));
@@ -304,6 +300,27 @@ public class AuxPowManager : IDisposable
     /// interpretation re-compacts to the reported bits wins. If neither does (or bits is absent) the
     /// historical little-endian reading is kept, so existing chains behave exactly as before.
     /// </summary>
+    /// <summary>
+    /// Parameters for the aux work request. createauxblock always takes the payout address. getauxblock takes it only
+    /// when <see cref="AuxChainConfig.PassAddressToGetAuxBlock"/> is set, because on Namecoin-style daemons a lone
+    /// argument to getauxblock is a block hash. getblocktemplate takes the segwit rule. Anything else: no parameters.
+    /// </summary>
+    internal static object BuildWorkRequestArgs(AuxChainConfig config)
+    {
+        var hasAddress = !string.IsNullOrEmpty(config.Address);
+
+        if(config.GetAuxBlockMethod == "createauxblock" && hasAddress)
+            return new object[] { config.Address };
+
+        if(config.GetAuxBlockMethod == "getauxblock" && config.PassAddressToGetAuxBlock && hasAddress)
+            return new object[] { config.Address };
+
+        if(config.GetAuxBlockMethod == "getblocktemplate")
+            return new object[] { new { rules = new[] { "segwit" } } };
+
+        return null;
+    }
+
     public static uint256 ResolveTarget(string targetHex, string bitsHex)
     {
         return ResolveTarget(targetHex, bitsHex, out _);

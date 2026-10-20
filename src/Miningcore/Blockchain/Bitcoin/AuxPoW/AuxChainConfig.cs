@@ -30,6 +30,12 @@ public class AuxChainConfig
     /// <summary>RPC method to fetch aux work. Use "createauxblock" for chains that require an address param. Defaults to "getauxblock".</summary>
     public string GetAuxBlockMethod { get; set; } = "getauxblock";
 
+    /// <summary>Send Address as the first parameter of GetAuxBlockMethod when it is "getauxblock". Needed by chains whose
+    /// getauxblock work request requires a payout address (e.g. ElevenSeventyFive) and have no createauxblock.
+    /// Leave false for Namecoin-style daemons, where getauxblock takes (hash, auxpow) and a lone address would be misread.
+    /// "createauxblock" always sends the address regardless of this flag. Defaults to false.</summary>
+    public bool PassAddressToGetAuxBlock { get; set; } = false;
+
     /// <summary>Set GetAuxBlockMethod to "getblocktemplate" for chains with no createauxblock RPC (e.g. VMESH):
     /// the child block is assembled locally and solved blocks go out via submitblock. Requires Address
     /// to be a bech32 segwit address with this human-readable prefix (e.g. "vm").</summary>
