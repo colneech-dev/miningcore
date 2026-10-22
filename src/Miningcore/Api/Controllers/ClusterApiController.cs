@@ -108,6 +108,7 @@ public class ClusterApiController : ApiControllerBase
     public Responses.AuxChainStat[] GetAuxChains()
     {
         var result = new Dictionary<string, Responses.AuxChainStat>();
+        var hashrateAt = new Dictionary<string, DateTimeOffset>();
 
         foreach(var poolConfig in clusterConfig.Pools.Where(x => x.Enabled))
         {
@@ -142,18 +143,34 @@ public class ClusterApiController : ApiControllerBase
                     stat.BlockHeight = block.Height;
                     stat.FetchedAt = block.FetchedAt;
 
-                    if(!string.IsNullOrEmpty(block.Bits))
+                    // Difficulty in the chain's own units: the target the pool actually mines against, measured against the
+                    // chain's configured diff1 (Bitcoin's when none is set). Falls back to the compact bits when the
+                    // daemon gave no usable target.
+                    var difficulty = Blockchain.Bitcoin.DifficultyUnits.TargetDifficulty(block.TargetValue,
+                        Blockchain.Bitcoin.DifficultyUnits.TryParseDiff1(mgr.Config.Diff1, out var diff1) ? diff1 : Blockchain.Bitcoin.BitcoinConstants.Diff1);
+
+                    if(difficulty == null && !string.IsNullOrEmpty(block.Bits))
                     {
                         try
                         {
-                            var nbTarget = new global::NBitcoin.Target(block.Bits.HexToByteArray());
-                            stat.NetworkDifficulty = nbTarget.Difficulty;
+                            difficulty = new global::NBitcoin.Target(block.Bits.HexToByteArray()).Difficulty;
                         }
                         catch(Exception ex)
                         {
                             logger.Debug(ex);   // best-effort enrichment; the response is still served without it
                         }
                     }
+
+                    if(difficulty != null)
+                        stat.NetworkDifficulty = difficulty.Value;
+                }
+
+                // Every pool that merge-mines the chain has its own manager; keep the freshest hashrate reading.
+                if(mgr.NetworkHashrate != null && mgr.NetworkHashrateAt != null &&
+                   (!hashrateAt.TryGetValue(mgr.Config.Id, out var seen) || mgr.NetworkHashrateAt > seen))
+                {
+                    hashrateAt[mgr.Config.Id] = mgr.NetworkHashrateAt.Value;
+                    stat.NetworkHashrate = mgr.NetworkHashrate;
                 }
             }
         }

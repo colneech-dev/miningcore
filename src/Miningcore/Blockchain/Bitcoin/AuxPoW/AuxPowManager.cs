@@ -56,6 +56,81 @@ public class AuxPowManager : IDisposable
     public AuxChainConfig Config => config;
     public AuxBlockData CurrentAuxBlock => currentAuxBlock;
 
+    // Network hashrate of the aux chain as reported by its own daemon (getnetworkhashps), cached so the API never
+    // waits on an RPC and a daemon without the method costs one failed call every few minutes, not one per poll.
+    private static readonly TimeSpan networkHashrateInterval = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan networkHashrateRetryInterval = TimeSpan.FromMinutes(5);
+    private long networkHashrateTicks;       // ticks of the last attempt (success or failure)
+    private int networkHashrateBusy;
+    private volatile bool networkHashrateFailed;
+    private double? networkHashrate;
+    private DateTimeOffset? networkHashrateAt;
+
+    /// <summary>Hashes per second the aux chain's daemon reports for the whole network, or null when unknown.</summary>
+    public double? NetworkHashrate => networkHashrate;
+
+    /// <summary>When <see cref="NetworkHashrate"/> was last read from the daemon.</summary>
+    public DateTimeOffset? NetworkHashrateAt => networkHashrateAt;
+
+    /// <summary>
+    /// Reads the network hashrate from the aux daemon at most once a minute (every five minutes after a failure).
+    /// Never throws; the result is exposed through <see cref="NetworkHashrate"/>.
+    /// </summary>
+    public async Task RefreshNetworkHashrateAsync(CancellationToken ct)
+    {
+        var wait = networkHashrateFailed ? networkHashrateRetryInterval : networkHashrateInterval;
+        if(TimeSpan.FromTicks(DateTimeOffset.UtcNow.Ticks - Interlocked.Read(ref networkHashrateTicks)) < wait)
+            return;
+
+        if(Interlocked.CompareExchange(ref networkHashrateBusy, 1, 0) != 0)
+            return;
+
+        try
+        {
+            Interlocked.Exchange(ref networkHashrateTicks, DateTimeOffset.UtcNow.Ticks);
+
+            var response = await rpc.ExecuteAsync<JToken>(logger, "getnetworkhashps", ct, null, timeout: TimeSpan.FromSeconds(10));
+            var value = response.Error == null ? ParseHashrate(response.Response) : null;
+
+            networkHashrateFailed = value == null;
+            if(value != null)
+            {
+                networkHashrate = value;
+                networkHashrateAt = DateTimeOffset.UtcNow;
+            }
+        }
+        catch(Exception ex)
+        {
+            networkHashrateFailed = true;
+            logger.Debug(() => $"[{config.Id}] getnetworkhashps failed: {ex.Message}");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref networkHashrateBusy, 0);
+        }
+    }
+
+    /// <summary>
+    /// Reads a hashrate from an RPC result: a JSON number, or a numeric string. Anything that is not a finite,
+    /// positive number (zero means the daemon has no estimate yet) is null.
+    /// </summary>
+    internal static double? ParseHashrate(JToken token)
+    {
+        if(token == null)
+            return null;
+
+        double value;
+
+        if(token.Type is JTokenType.Float or JTokenType.Integer)
+            value = token.Value<double>();
+        else if(token.Type == JTokenType.String && double.TryParse(token.Value<string>(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+            value = parsed;
+        else
+            return null;
+
+        return double.IsFinite(value) && value > 0 ? value : null;
+    }
+
     /// <summary>
     /// Subscribes to the aux chain daemon's ZMQ hashblock topic if configured.
     /// On each notification, immediately invalidates the cached aux block so the
@@ -97,6 +172,9 @@ public class AuxPowManager : IDisposable
     /// </summary>
     public async Task RefreshAsync(CancellationToken ct)
     {
+        // independent of the work fetch below and self-throttled; the API reads the cached value
+        _ = RefreshNetworkHashrateAsync(ct);
+
         var elapsed = TimeSpan.FromTicks(DateTimeOffset.UtcNow.Ticks - Interlocked.Read(ref lastFetchTicks));
         if(!auxBlockInvalidated && elapsed < fetchInterval)
             return;
