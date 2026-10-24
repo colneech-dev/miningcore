@@ -4,27 +4,31 @@ Short records of non-obvious choices in this fork: what was decided, why, and wh
 costs. Newest first. Each entry names the commit that made the change; the commit message
 carries the full detail and the verification that was done.
 
-## 2026-10-24 — Aux chains: ElevenSeventyFive slot rule, one stats entry per algorithm (6f76bace, cbd0e99c)
+## 2026-10-24 — Aux chains: per-algorithm stats; ElevenSeventyFive cannot share a tree (6f76bace, cbd0e99c)
 
-**Decision.** Three changes to merge-mined chain handling:
+**Decision.** Three changes to merge-mined chain handling, and one removal:
 
-- `slotByNonce` (per aux chain, default off) places a chain at `nonce % treeSize` instead of the
-  Namecoin LCG slot. It is on for ElevenSeventyFive.
 - `/api/auxchains` returns one entry per chain *and pool algorithm*, plus Rootstock and Hathor,
   which are merge-mined outside the AuxPoW tree. The aggregation lives in `AuxChainStatsBuilder`.
 - `hashrateBlockTimeSeconds` (per aux chain, default off) estimates hashrate from difficulty
   instead of asking the daemon. It is on for Myriadcoin (300 s: five algorithms share one
   block a minute). Rootstock and Hathor are always estimated at their 30 s block time.
+- `slotByNonce` (per aux chain, default off) places a chain at `nonce % treeSize` instead of the
+  Namecoin LCG slot. Kept because it is correct for daemons that only enforce that rule, but no chain
+  uses it any more.
+- ElevenSeventyFive (chain id 1175) was removed from every pool.
 
-**Why.** ElevenSeventyFive's `CAuxPow::Check` requires `chain index == merkle nonce % tree size`
-and ignores the chain id, so every submission using the LCG slot was rejected ("chain index does
-not match nonce mod size"). Myriadcoin runs a SHA-256 and a Scrypt node under one chain id and
-the entries were merged, so the card showed whichever lane polled last; its `getnetworkhashps`
-also ignores the algorithm and returned one figure for both lanes.
+**Why.** Myriadcoin runs a SHA-256 and a Scrypt node under one chain id and the entries were merged,
+so the card showed whichever lane polled last; its `getnetworkhashps` also ignores the algorithm.
+ElevenSeventyFive's `CAuxPow::Check` has two rules that differ from Namecoin's: the chain index must be
+`nonce % tree size` (fixed by `slotByNonce`, confirmed on the live daemon: that error disappeared), and the
+coinbase must hold the chain merkle root in the *opposite byte order* (it compares the raw coinbase bytes to
+the computed root; Namecoin-style daemons reverse it first). A coinbase carries one shared commitment and every
+daemon rejects a second merged-mining marker, so no single commitment satisfies both orders. The second check
+fails every submission with "chain merkle root does not match coinbase commitment".
 
-**Cost.** Hashrate for the estimated chains is derived, not measured. Chains that need
-`slotByNonce` must be flagged in config; nothing detects it. The ElevenSeventyFive fix was
-verified by unit tests and the daemon's source, not yet by an accepted block.
+**Cost.** ElevenSeventyFive could only be mined from a pool where it is the sole merged chain. Hashrate for
+the estimated chains is derived, not measured.
 
 ## 2026-10-18 — Replace AutoMapper with Mapperly (aa04eaeb)
 
