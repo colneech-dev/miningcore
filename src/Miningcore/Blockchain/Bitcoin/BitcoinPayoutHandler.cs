@@ -55,7 +55,40 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
     private CoinTemplate coin;
     private int minConfirmations;
 
+    // "insufficient funds" repeats every payout run until the wallet's funds confirm; tell operators about it once per interval
+    private static readonly TimeSpan InsufficientFundsNoticeInterval = TimeSpan.FromMinutes(30);
+    private readonly NoticeThrottle insufficientFundsNotice = new(InsufficientFundsNoticeInterval);
+
     protected override string LogCategory => "Bitcoin Payout Handler";
+
+    /// <summary>
+    /// Best-effort description of the wallet's spendable funds, for the "insufficient funds" log line. Never throws: a
+    /// failed lookup must not turn a harmless retry into a second error. "*" asks for the whole wallet on every daemon
+    /// generation, so on old account-based wallets the default account the pool pays from can still show less.
+    /// </summary>
+    private async Task<string> DescribeWalletFundsAsync(CancellationToken ct)
+    {
+        try
+        {
+            var confirmed = await rpcClient.ExecuteAsync<JToken>(logger, BitcoinCommands.GetBalance, ct, new object[] { "*", 1 });
+            var counting = await rpcClient.ExecuteAsync<JToken>(logger, BitcoinCommands.GetBalance, ct, new object[] { "*", 0 });
+
+            if(confirmed.Error != null || counting.Error != null || confirmed.Response == null || counting.Response == null)
+                return "the wallet balance could not be read";
+
+            var confirmedAmount = confirmed.Response.Value<decimal>();
+            var countingAmount = counting.Response.Value<decimal>();
+            var waiting = countingAmount - confirmedAmount;
+
+            return $"the wallet holds {FormatAmount(confirmedAmount)} confirmed and {FormatAmount(countingAmount)} counting unconfirmed" +
+                   (waiting > 0 ? $" ({FormatAmount(waiting)} is waiting for confirmations, for example after a consolidation sweep)" : string.Empty);
+        }
+
+        catch(Exception ex)
+        {
+            return $"the wallet balance could not be read ({ex.Message})";
+        }
+    }
 
     #region IPayoutHandler
 
@@ -320,6 +353,9 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
                 await CompletePayoutBatchAsync(batch, !string.IsNullOrEmpty(txId) ? txId : UnknownTransactionId);
 
                 NotifyPayoutSuccess(poolConfig.Id, balances, TxIdsForNotification(txId), null);
+
+                // funds are back: a later shortage is a new event and should notify straight away
+                insufficientFundsNotice.Reset();
             }
 
             else
@@ -363,6 +399,23 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
                     logger.Error(() => $"[{LogCategory}] {BitcoinCommands.SendMany} failed without a daemon response ({result.Error.Message}); payout batch {batch.Id} stays pending and payouts are halted until it is resolved via api/admin/pools/{poolConfig.Id}/payoutbatches/{batch.Id}/resolve");
 
                     NotifyPayoutFailure(poolConfig.Id, balances, $"{BitcoinCommands.SendMany} outcome unknown ({result.Error.Message}); payout batch {batch.Id} needs operator resolution", null);
+                }
+
+                else if(PayoutErrorClassifier.IsInsufficientFunds(result.Error))
+                {
+                    // The wallet cannot fund this batch right now. Nothing was sent, miners' balances are untouched and the
+                    // batch is retried on the next run. This typically follows a consolidation sweep (the spent inputs
+                    // count immediately but the new outputs only after they confirm) or immature rewards, so it is
+                    // reported as a warning with the wallet's numbers instead of an outage.
+                    var owed = balances.Sum(x => x.Amount);
+                    var funds = await DescribeWalletFundsAsync(ct);
+                    var reason = $"{BitcoinCommands.SendMany} cannot be funded right now ({result.Error.Message}, code {result.Error.Code}); batch needs {FormatAmount(owed)}; {funds}";
+
+                    logger.Warn(() => $"[{LogCategory}] {reason}. Nothing was sent; the batch is released and will be retried on the next payout run.");
+                    await MarkPayoutBatchFailedAsync(batch, reason);
+
+                    if(insufficientFundsNotice.ShouldNotify(DateTime.UtcNow))
+                        NotifyPayoutFailure(poolConfig.Id, balances, $"{reason}. Payouts retry automatically; this notice repeats at most every {InsufficientFundsNoticeInterval.TotalMinutes:0} minutes.", null);
                 }
 
                 else

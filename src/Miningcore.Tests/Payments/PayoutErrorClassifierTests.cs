@@ -62,4 +62,42 @@ public class PayoutErrorClassifierTests
     {
         Assert.False(PayoutErrorClassifier.IsOutcomeUnknown(new JsonRpcError(code, "daemon", null)));
     }
+
+    [Fact]
+    public void NoError_IsNotInsufficientFunds() => Assert.False(PayoutErrorClassifier.IsInsufficientFunds(null));
+
+    [Theory]
+    [InlineData("Account has insufficient funds")]   // old account-based wallets
+    [InlineData("Insufficient funds")]
+    public void WalletInsufficientFundsCode_IsInsufficientFunds(string message)
+    {
+        Assert.True(PayoutErrorClassifier.IsInsufficientFunds(new JsonRpcError(-6, message, null)));
+    }
+
+    [Theory]
+    [InlineData("Wallet error: Insufficient funds")]
+    [InlineData("INSUFFICIENT FUNDS")]
+    public void GenericWalletErrorSayingInsufficientFunds_IsInsufficientFunds(string message)
+    {
+        Assert.True(PayoutErrorClassifier.IsInsufficientFunds(new JsonRpcError(-4, message, null)));
+    }
+
+    [Theory]
+    [InlineData(-4, "Transaction creation failed")]    // e.g. too many tiny inputs: a different problem that needs an operator
+    [InlineData(-13, "Please enter the wallet passphrase")]
+    [InlineData(-5, "Invalid address")]
+    [InlineData(-26, "insufficient funds")]            // verify codes keep their own, stricter handling
+    public void OtherErrors_AreNotInsufficientFunds(int code, string message)
+    {
+        Assert.False(PayoutErrorClassifier.IsInsufficientFunds(new JsonRpcError(code, message, null)));
+    }
+
+    [Fact]
+    public void InsufficientFunds_NeverMeansTheOutcomeIsUnknown()
+    {
+        // the two classifications must not overlap, or an unfunded batch would halt the pool like a possibly-sent one
+        var error = new JsonRpcError(-6, "Account has insufficient funds", null);
+        Assert.True(PayoutErrorClassifier.IsInsufficientFunds(error));
+        Assert.False(PayoutErrorClassifier.IsOutcomeUnknown(error));
+    }
 }

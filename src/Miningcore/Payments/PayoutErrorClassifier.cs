@@ -15,6 +15,27 @@ public static class PayoutErrorClassifier
     private const int RpcVerifyRejected = -26;
     private const int RpcVerifyAlreadyInChain = -27;
 
+    // RPC_WALLET_INSUFFICIENT_FUNDS; some wallets report the same condition as a generic wallet error (-4) and only say so in the text
+    private const int RpcWalletInsufficientFunds = -6;
+    private const int RpcWalletError = -4;
+
+    /// <summary>
+    /// True when the wallet refused the send because it cannot fund it right now. Nothing was sent, and the
+    /// condition normally clears by itself (unconfirmed change after a consolidation sweep, immature coinbase
+    /// outputs, a payout racing a block), so the pool should wait and retry rather than raise an outage alarm.
+    /// </summary>
+    public static bool IsInsufficientFunds(JsonRpcError error)
+    {
+        if(error == null)
+            return false;
+
+        if(error.Code == RpcWalletInsufficientFunds)
+            return true;
+
+        return error.Code == RpcWalletError &&
+               error.Message?.Contains("insufficient funds", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
     /// <summary>True when coins may have left the wallet (so the batch must stay pending).</summary>
     public static bool IsOutcomeUnknown(JsonRpcError error)
     {
