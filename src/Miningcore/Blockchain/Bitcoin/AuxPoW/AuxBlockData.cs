@@ -12,6 +12,9 @@ public record AuxBlockData
     /// <summary>Chain ID of the aux chain</summary>
     public int ChainId { get; set; }
 
+    /// <summary>Place this chain at nonce % treeSize instead of the Namecoin LCG slot (see AuxChainConfig.SlotByNonce)</summary>
+    public bool SlotByNonce { get; set; }
+
     /// <summary>Previous block hash (hex)</summary>
     public string PreviousBlockHash { get; set; }
 

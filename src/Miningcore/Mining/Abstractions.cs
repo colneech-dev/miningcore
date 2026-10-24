@@ -25,4 +25,10 @@ public interface IMiningPool
 public interface IAuxMiningPool
 {
     IReadOnlyList<AuxPowManager> AuxManagers { get; }
+
+    /// <summary>Rootstock merge-mining manager; null when the pool does not merge-mine RSK. It is not an AuxPoW chain.</summary>
+    Blockchain.Bitcoin.RSK.RskManager RskManager { get; }
+
+    /// <summary>Hathor merge-mining manager; null when the pool does not merge-mine Hathor. It is not an AuxPoW chain.</summary>
+    Blockchain.Bitcoin.Hathor.HathorManager HathorManager { get; }
 }

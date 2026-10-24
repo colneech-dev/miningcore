@@ -257,6 +257,7 @@ public class AuxPowManager : IDisposable
             {
                 Hash = response.Response["hash"]?.Value<string>(),
                 ChainId = ParseInt(response.Response["chainid"]) ?? config.ChainId,
+                SlotByNonce = config.SlotByNonce,
                 PreviousBlockHash = response.Response["previousblockhash"]?.Value<string>(),
                 CoinbaseValue = response.Response["coinbasevalue"]?.Value<long>() ?? 0,
                 Bits = response.Response["bits"]?.Value<string>(),

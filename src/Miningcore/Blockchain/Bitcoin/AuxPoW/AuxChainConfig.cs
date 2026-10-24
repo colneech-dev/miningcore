@@ -17,6 +17,11 @@ public class AuxChainConfig
     /// <summary>Aux chain ID used in AuxPoW merkle tree (Namecoin = 1)</summary>
     public int ChainId { get; set; }
 
+    /// <summary>For daemons whose AuxPoW check only requires "chain index == merkle nonce % tree size" and ignores
+    /// the chain id (ElevenSeventyFive). The chain is placed at nonce % treeSize instead of the Namecoin LCG slot;
+    /// the nonce search still keeps every chain's slot unique. Leave false for Namecoin-style daemons. Defaults to false.</summary>
+    public bool SlotByNonce { get; set; } = false;
+
     /// <summary>RPC connection to the aux chain daemon</summary>
     public DaemonEndpointConfig[] Daemons { get; set; }
 

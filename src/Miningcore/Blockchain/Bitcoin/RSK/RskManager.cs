@@ -121,6 +121,19 @@ public class RskManager : IDisposable
                 logger.Warn(() => $"[{config.Id}] mnr_getWork returned unexpected target (cannot set TargetValue): '{targetHex}'");
             }
 
+            // mnr_getWork carries no height. Best effort: a failure here must not discard the work just fetched.
+            try
+            {
+                var tip = await rpc.ExecuteAsync<string>(logger, "eth_blockNumber", cts.Token, null);
+                var tipHex = StripHexPrefix(tip.Response);
+                if(tip.Error == null && !string.IsNullOrEmpty(tipHex) && long.TryParse(tipHex, System.Globalization.NumberStyles.HexNumber, null, out var tipHeight))
+                    block.Height = (int) Math.Min(tipHeight + 1, int.MaxValue);   // height of the block being mined, as the other chains report
+            }
+            catch(Exception ex)
+            {
+                logger.Debug(() => $"[{config.Id}] eth_blockNumber failed: {ex.Message}");
+            }
+
             currentAuxBlock = block;
             Interlocked.Exchange(ref lastFetchTicks, DateTimeOffset.UtcNow.Ticks);
             succeeded = true;

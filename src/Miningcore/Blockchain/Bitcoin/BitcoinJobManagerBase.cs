@@ -50,6 +50,8 @@ public abstract class BitcoinJobManagerBase<TJob> : JobManagerBase<TJob>
     public IReadOnlyList<AuxPowManager> AuxManagers => auxPowManagers;
     protected RskManager rskManager;
     protected Hathor.HathorManager hathorManager;
+    public RskManager RskManager => rskManager;
+    public Hathor.HathorManager HathorManager => hathorManager;
     protected BitcoinPoolPaymentProcessingConfigExtra extraPoolPaymentProcessingConfig;
     protected DateTime? lastJobRebroadcast;
     protected bool hasSubmitBlockMethod;

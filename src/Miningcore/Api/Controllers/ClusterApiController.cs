@@ -107,8 +107,7 @@ public class ClusterApiController : ApiControllerBase
     [HttpGet("auxchains")]
     public Responses.AuxChainStat[] GetAuxChains()
     {
-        var result = new Dictionary<string, Responses.AuxChainStat>();
-        var hashrateAt = new Dictionary<string, DateTimeOffset>();
+        var sources = new List<AuxChainSource>();
 
         foreach(var poolConfig in clusterConfig.Pools.Where(x => x.Enabled))
         {
@@ -118,64 +117,38 @@ public class ClusterApiController : ApiControllerBase
             var algorithm = poolConfig.Template?.GetAlgorithmName() ?? "unknown";
             var poolHashrate = pool.PoolStats?.PoolHashrate ?? 0;
 
+            // Rootstock and Hathor are merge-mined outside the AuxPoW tree, so they are not in AuxManagers; give them a
+            // card too. Neither daemon reports a network hashrate, so it is estimated from the difficulty.
+            if(auxPool.RskManager is { } rsk)
+                sources.Add(new AuxChainSource
+                {
+                    PoolId = poolConfig.Id, Algorithm = algorithm, PoolHashrate = poolHashrate,
+                    Id = rsk.Config.Id, Name = rsk.Config.Name, ChainId = rsk.Config.ChainId,
+                    ExplorerBlockLink = rsk.Config.ExplorerBlockLink, Block = rsk.CurrentAuxBlock,
+                    EstimateHashrateBlockTimeSeconds = rsk.Config.BlockTimeSeconds,
+                });
+
+            if(auxPool.HathorManager is { } hathor)
+                sources.Add(new AuxChainSource
+                {
+                    PoolId = poolConfig.Id, Algorithm = algorithm, PoolHashrate = poolHashrate,
+                    Id = hathor.Config.Id, Name = hathor.Config.Name, ChainId = hathor.Config.ChainId,
+                    ExplorerBlockLink = hathor.Config.ExplorerBlockLink, Block = hathor.CurrentAuxBlock,
+                    EstimateHashrateBlockTimeSeconds = hathor.Config.BlockTimeSeconds,
+                });
+
             foreach(var mgr in auxPool.AuxManagers)
-            {
-                if(!result.TryGetValue(mgr.Config.Id, out var stat))
+                sources.Add(new AuxChainSource
                 {
-                    stat = new Responses.AuxChainStat
-                    {
-                        Id = mgr.Config.Id,
-                        Name = mgr.Config.Name,
-                        ChainId = mgr.Config.ChainId,
-                        Algorithm = algorithm,
-                        ExplorerBlockLink = mgr.Config.ExplorerBlockLink,
-                        PoolIds = Array.Empty<string>(),
-                    };
-                    result[mgr.Config.Id] = stat;
-                }
-
-                stat.PoolIds = stat.PoolIds.Append(poolConfig.Id).ToArray();
-                stat.PoolHashrate += poolHashrate;
-
-                var block = mgr.CurrentAuxBlock;
-                if(block != null && (stat.FetchedAt == null || block.FetchedAt > stat.FetchedAt))
-                {
-                    stat.BlockHeight = block.Height;
-                    stat.FetchedAt = block.FetchedAt;
-
-                    // Difficulty in the chain's own units: the target the pool actually mines against, measured against the
-                    // chain's configured diff1 (Bitcoin's when none is set). Falls back to the compact bits when the
-                    // daemon gave no usable target.
-                    var difficulty = Blockchain.Bitcoin.DifficultyUnits.TargetDifficulty(block.TargetValue,
-                        Blockchain.Bitcoin.DifficultyUnits.TryParseDiff1(mgr.Config.Diff1, out var diff1) ? diff1 : Blockchain.Bitcoin.BitcoinConstants.Diff1);
-
-                    if(difficulty == null && !string.IsNullOrEmpty(block.Bits))
-                    {
-                        try
-                        {
-                            difficulty = new global::NBitcoin.Target(block.Bits.HexToByteArray()).Difficulty;
-                        }
-                        catch(Exception ex)
-                        {
-                            logger.Debug(ex);   // best-effort enrichment; the response is still served without it
-                        }
-                    }
-
-                    if(difficulty != null)
-                        stat.NetworkDifficulty = difficulty.Value;
-                }
-
-                // Every pool that merge-mines the chain has its own manager; keep the freshest hashrate reading.
-                if(mgr.NetworkHashrate != null && mgr.NetworkHashrateAt != null &&
-                   (!hashrateAt.TryGetValue(mgr.Config.Id, out var seen) || mgr.NetworkHashrateAt > seen))
-                {
-                    hashrateAt[mgr.Config.Id] = mgr.NetworkHashrateAt.Value;
-                    stat.NetworkHashrate = mgr.NetworkHashrate;
-                }
-            }
+                    PoolId = poolConfig.Id, Algorithm = algorithm, PoolHashrate = poolHashrate,
+                    Id = mgr.Config.Id, Name = mgr.Config.Name, ChainId = mgr.Config.ChainId,
+                    ExplorerBlockLink = mgr.Config.ExplorerBlockLink, Block = mgr.CurrentAuxBlock,
+                    Diff1 = mgr.Config.Diff1,
+                    NetworkHashrate = mgr.NetworkHashrate, NetworkHashrateAt = mgr.NetworkHashrateAt,
+                });
         }
 
-        return result.Values.OrderBy(x => x.Name).ToArray();
+        return AuxChainStatsBuilder.Build(sources);
     }
 
     #endregion // Actions

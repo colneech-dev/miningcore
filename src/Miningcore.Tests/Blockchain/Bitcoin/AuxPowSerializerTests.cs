@@ -347,6 +347,29 @@ public class AuxPowSerializerTests
     }
 
     [Fact]
+    public void BuildAuxTree_SlotByNonceChain_SitsAtNonceModSizeAndSlotsStayUnique()
+    {
+        // ElevenSeventyFive's daemon rejects any AuxPoW whose chain index != nonce % treeSize.
+        // Mix it with LCG chains using ids from the live dgb-solo pool.
+        var esf = new AuxBlockData { Hash = new string('b', 64), ChainId = 1175, SlotByNonce = true };
+        var chains = new[] { MakeAux(1), MakeAux(2), MakeAux(4), MakeAux(16), MakeAux(117), MakeAux(1899), esf };
+        var (nodes, treeSize, nonce) = AuxPowSerializer.BuildAuxTree(chains);
+
+        int h = TreeHeight(treeSize);
+        var (_, esfIndex) = AuxPowSerializer.GetAuxMerkleBranch(nodes, treeSize, nonce, esf.ChainId, esf.SlotByNonce);
+        Assert.Equal(nonce % (uint) treeSize, esfIndex);
+
+        var slots = chains.Select(c => AuxPowSerializer.GetSlot(nonce, c.ChainId, h, c.SlotByNonce)).ToList();
+        Assert.Equal(slots.Count, slots.Distinct().Count());
+    }
+
+    [Fact]
+    public void GetSlot_DefaultsToLcg()
+    {
+        Assert.Equal(AuxPowSerializer.GetExpectedIndex(7, 1175, 7), AuxPowSerializer.GetSlot(7, 1175, 7, false));
+    }
+
+    [Fact]
     public void BuildAuxTree_LcgNonce_MatchesCoinbaseCommitment()
     {
         // The nonce returned by BuildAuxTree must match what BuildCoinbaseCommitment embeds.

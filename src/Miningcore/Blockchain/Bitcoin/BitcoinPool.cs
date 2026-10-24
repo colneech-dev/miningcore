@@ -44,6 +44,8 @@ public class BitcoinPool : PoolBase, IAuxMiningPool
     private BitcoinTemplate coin;
 
     public IReadOnlyList<AuxPoW.AuxPowManager> AuxManagers => manager?.AuxManagers ?? Array.Empty<AuxPoW.AuxPowManager>();
+    public RSK.RskManager RskManager => manager?.RskManager;
+    public Hathor.HathorManager HathorManager => manager?.HathorManager;
 
     protected virtual async Task OnSubscribeAsync(StratumConnection connection, Timestamped<JsonRpcRequest> tsRequest)
     {
