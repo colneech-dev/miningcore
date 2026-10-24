@@ -112,6 +112,20 @@ public class AuxChainStatsBuilderTests
     }
 
     [Fact]
+    public void ChainConfiguredForEstimation_IgnoresTheDaemonHashrate_ForEachLane()
+    {
+        // Myriadcoin's getnetworkhashps returns one figure for every algorithm; each lane must get its own
+        var stats = AuxChainStatsBuilder.Build(new[]
+        {
+            Source("sha-pool", "Sha256D", "myriad", Block(0x1b00ffff)) with { NetworkHashrate = 13e12, NetworkHashrateAt = T0, EstimateHashrateBlockTimeSeconds = 300 },
+            Source("scrypt-pool", "Scrypt", "myriad", Block(0x1c00ffff)) with { NetworkHashrate = 13e12, NetworkHashrateAt = T0, EstimateHashrateBlockTimeSeconds = 300 },
+        });
+
+        Assert.Equal(65536.0 * 4294967296.0 / 300, stats.Single(x => x.Algorithm == "Sha256D").NetworkHashrate!.Value, 0);
+        Assert.Equal(256.0 * 4294967296.0 / 300, stats.Single(x => x.Algorithm == "Scrypt").NetworkHashrate!.Value, 0);
+    }
+
+    [Fact]
     public void FallsBackToCompactBits_WhenTheDaemonGaveNoTarget()
     {
         var block = new AuxBlockData { Hash = new string('a', 64), Bits = "1c00ffff", Height = 5, FetchedAt = T0 };

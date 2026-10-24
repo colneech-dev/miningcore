@@ -74,6 +74,11 @@ public class AuxChainConfig
     /// reward. Defaults to 8 (satoshi-style); set it for chains with a different precision.</summary>
     public int Decimals { get; set; } = 8;
 
+    /// <summary>Estimate the network hashrate from the difficulty and this block time (seconds) instead of asking the daemon.
+    /// For multi-algorithm chains whose getnetworkhashps ignores the algorithm and so reports the same figure for every
+    /// lane: Myriadcoin has one block a minute shared by five algorithms, so 300 per algorithm. Unset by default.</summary>
+    public int? HashrateBlockTimeSeconds { get; set; }
+
     /// <summary>Difficulty-1 target of the aux chain as hex, for chains whose difficulty is not measured
     /// against Bitcoin's 0x00000000ffff0000... target. Leave unset for every Bitcoin-derived chain.
     /// Used only to express the recorded hash and network difficulty in the aux chain's own units.</summary>

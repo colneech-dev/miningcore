@@ -72,7 +72,8 @@ public static class AuxChainStatsBuilder
                 stat.NetworkHashrate = stat.NetworkDifficulty * 4294967296.0 / src.EstimateHashrateBlockTimeSeconds.Value;
 
             // Every pool that merge-mines the chain has its own manager; keep the freshest hashrate reading.
-            if(src.NetworkHashrate != null && src.NetworkHashrateAt != null &&
+            // A chain configured for estimation ignores the daemon's figure: that is the reason it is configured.
+            if(src.EstimateHashrateBlockTimeSeconds is not > 0 && src.NetworkHashrate != null && src.NetworkHashrateAt != null &&
                (!hashrateAt.TryGetValue(key, out var seen) || src.NetworkHashrateAt > seen))
             {
                 hashrateAt[key] = src.NetworkHashrateAt.Value;

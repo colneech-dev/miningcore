@@ -145,6 +145,7 @@ public class ClusterApiController : ApiControllerBase
                     ExplorerBlockLink = mgr.Config.ExplorerBlockLink, Block = mgr.CurrentAuxBlock,
                     Diff1 = mgr.Config.Diff1,
                     NetworkHashrate = mgr.NetworkHashrate, NetworkHashrateAt = mgr.NetworkHashrateAt,
+                    EstimateHashrateBlockTimeSeconds = mgr.Config.HashrateBlockTimeSeconds,
                 });
         }
 
