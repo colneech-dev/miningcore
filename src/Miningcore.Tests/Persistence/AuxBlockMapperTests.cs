@@ -1,6 +1,6 @@
 using System;
 using Autofac;
-using AutoMapper;
+using Miningcore.Mapping;
 using Miningcore.Persistence.Model;
 using Xunit;
 
@@ -10,18 +10,18 @@ using ResponseAuxBlock = Miningcore.Api.Responses.AuxBlock;
 namespace Miningcore.Tests.Persistence;
 
 /// <summary>
-/// Verifies that the AutoMapper profiles for AuxBlock round-trip correctly
+/// Verifies that the Mapperly mappings for AuxBlock round-trip correctly
 /// through the model → entity → model and model → API response paths.
 /// These catch missing mappings, renamed properties, or type mismatches silently
 /// introduced when the model or entity is changed.
 /// </summary>
 public class AuxBlockMapperTests : TestBase
 {
-    private readonly IMapper mapper;
+    private readonly MiningcoreMapper mapper;
 
     public AuxBlockMapperTests()
     {
-        mapper = container.Resolve<IMapper>();
+        mapper = container.Resolve<MiningcoreMapper>();
     }
 
     [Fact]
@@ -46,7 +46,7 @@ public class AuxBlockMapperTests : TestBase
             Created = new DateTime(2026, 5, 20, 6, 5, 14, DateTimeKind.Utc),
         };
 
-        var entity = mapper.Map<EntityAuxBlock>(model);
+        var entity = mapper.ToEntity(model);
 
         Assert.Equal(model.PoolId, entity.PoolId);
         Assert.Equal(model.ChainId, entity.ChainId);
@@ -64,7 +64,7 @@ public class AuxBlockMapperTests : TestBase
         Assert.Equal(model.Created, entity.Created);
 
         // map back
-        var roundTripped = mapper.Map<AuxBlock>(entity);
+        var roundTripped = mapper.ToModel(entity);
 
         Assert.Equal(model.PoolId, roundTripped.PoolId);
         Assert.Equal(model.ChainId, roundTripped.ChainId);
@@ -96,7 +96,7 @@ public class AuxBlockMapperTests : TestBase
             Created = new DateTime(2026, 5, 20, 6, 5, 14, DateTimeKind.Utc),
         };
 
-        var response = mapper.Map<ResponseAuxBlock>(model);
+        var response = mapper.ToResponse(model);
 
         Assert.Equal(model.PoolId, response.PoolId);
         Assert.Equal(model.ChainId, response.ChainId);
@@ -133,7 +133,7 @@ public class AuxBlockMapperTests : TestBase
             Created = new DateTime(2026, 5, 19, 7, 2, 24, DateTimeKind.Utc),
         };
 
-        var entity = mapper.Map<EntityAuxBlock>(model);
+        var entity = mapper.ToEntity(model);
 
         Assert.Null(entity.BlockHeight);
         Assert.Null(entity.ParentBlockHash);
@@ -141,7 +141,7 @@ public class AuxBlockMapperTests : TestBase
         Assert.Null(entity.Miner);
         Assert.Null(entity.Worker);
 
-        var response = mapper.Map<ResponseAuxBlock>(model);
+        var response = mapper.ToResponse(model);
 
         Assert.Null(response.BlockHeight);
         Assert.Null(response.ParentBlockHash);

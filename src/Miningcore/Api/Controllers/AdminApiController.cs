@@ -7,7 +7,6 @@ using Miningcore.Util;
 using System.Collections.Concurrent;
 using System.Net;
 using NLog;
-using NLog.Targets;
 
 namespace Miningcore.Api.Controllers;
 
@@ -22,7 +21,10 @@ public class AdminApiController : ApiControllerBase
         pools = ctx.Resolve<ConcurrentDictionary<string, IMiningPool>>();
         paymentsRepo = ctx.Resolve<IPaymentRepository>();
         balanceRepo = ctx.Resolve<IBalanceRepository>();
+        payoutBatchRepo = ctx.Resolve<IPayoutBatchRepository>();
     }
+
+    private readonly IPayoutBatchRepository payoutBatchRepo;
 
     private readonly IPaymentRepository paymentsRepo;
     private readonly IBalanceRepository balanceRepo;
@@ -35,7 +37,8 @@ public class AdminApiController : ApiControllerBase
 
     #region Actions
 
-    [HttpGet("logging/level/{level}")]
+    // POST: this changes server state. GET mutations are cacheable and trivially cross-site requestable.
+    [HttpPost("logging/level/{level}")]
     public ActionResult<string> SetLoggingLevel(string level)
     {
         if (string.IsNullOrEmpty(level))
@@ -46,36 +49,21 @@ public class AdminApiController : ApiControllerBase
         if (logLevel == null)
             throw new ApiException("Invalid logging level", HttpStatusCode.BadRequest);
 
-        logger.Error("Admin update Logging Level this is Error");
-        logger.Trace("Admin update Logging Level this is Trace");
-
         foreach (var rule in LogManager.Configuration.LoggingRules)
         {
             rule.EnableLoggingForLevel(logLevel);
             rule.SetLoggingLevels(logLevel, LogLevel.Fatal); // set minimum logging level
         }
 
-        Target target = LogManager.Configuration.FindTargetByName("console");
-
-        if (target != null)
-        {
-            var loggingConfig = LogManager.Configuration;
-
-            loggingConfig.AddRule(logLevel, LogLevel.Fatal, target);
-
-            LogManager.Configuration = loggingConfig;
-        }
-
+        // The existing rules were re-levelled above. This used to also append a brand-new rule on
+        // every call, so repeated calls accumulated duplicate rules and duplicate log lines.
         LogManager.ReconfigExistingLoggers();
-
-        logger.Error("Admin update Logging Level this is Error AFTER");
-        logger.Trace("Admin update Logging Level this is Trace AFTER");
 
         logger.Info($"Logging level set to {level}");
         return "Ok";
     }
 
-    [HttpGet("payment/processing/enable")]
+    [HttpPost("payment/processing/enable")]
     public ActionResult<string> EnablePoolsPaymentProcessing()
     {
         var poolIdsUpdated = new List<string>();
@@ -95,7 +83,7 @@ public class AdminApiController : ApiControllerBase
         return poolIdsCsv;
     }
 
-    [HttpGet("payment/processing/disable")]
+    [HttpPost("payment/processing/disable")]
     public ActionResult<string> DisablePoolsPaymentProcessing()
     {
         var poolIdsUpdated = new List<string>();
@@ -115,7 +103,7 @@ public class AdminApiController : ApiControllerBase
         return poolIdsCsv;
     }
 
-    [HttpGet("payment/processing/{poolId}/enable")]
+    [HttpPost("payment/processing/{poolId}/enable")]
     public ActionResult<string> EnablePoolPaymentProcessing(string poolId)
     {
         if (string.IsNullOrEmpty(poolId))
@@ -130,7 +118,7 @@ public class AdminApiController : ApiControllerBase
         return "Ok";
     }
 
-    [HttpGet("payment/processing/{poolId}/disable")]
+    [HttpPost("payment/processing/{poolId}/disable")]
     public ActionResult<string> DisablePoolPaymentProcessing(string poolId)
     {
         if (string.IsNullOrEmpty(poolId))
@@ -182,7 +170,7 @@ public class AdminApiController : ApiControllerBase
         if(result == null)
             throw new ApiException("No settings found", HttpStatusCode.NotFound);
 
-        return mapper.Map<Responses.MinerSettings>(result);
+        return mapper.ToResponse(result);
     }
 
     [HttpPost("pools/{poolId}/miners/{address}/settings")]
@@ -198,7 +186,7 @@ public class AdminApiController : ApiControllerBase
             throw new ApiException("Invalid or missing settings", HttpStatusCode.BadRequest);
 
         // map settings
-        var mapped = mapper.Map<Persistence.Model.MinerSettings>(settings);
+        var mapped = mapper.ToModel(settings);
 
         // clamp limit
         if(pool.PaymentProcessing != null)
@@ -216,8 +204,88 @@ public class AdminApiController : ApiControllerBase
 
         logger.Info(()=> $"Updated settings for pool {pool.Id}, miner {address}");
 
-        return mapper.Map<Responses.MinerSettings>(result);
+        return mapper.ToResponse(result);
     }
+
+    #region Payout batches
+
+    private static Responses.AdminPayoutBatch ToResponse(Persistence.Model.PayoutBatch batch)
+    {
+        var recipients = Persistence.Model.PayoutBatchRecipients.Deserialize(batch.PoolId, batch.Recipients);
+
+        return new Responses.AdminPayoutBatch
+        {
+            Id = batch.Id,
+            PoolId = batch.PoolId,
+            Status = batch.Status.ToString().ToLowerInvariant(),
+            Recipients = recipients.Select(x => new Persistence.Model.PayoutBatchRecipient(x.Address, x.Amount)).ToArray(),
+            Total = recipients.Sum(x => x.Amount),
+            TransactionId = batch.TransactionConfirmationData,
+            Error = batch.Error,
+            Created = batch.Created,
+            Updated = batch.Updated,
+        };
+    }
+
+    /// <summary>Most recent payout batches for a pool. A "pending" batch older than a minute means payouts are halted.</summary>
+    [HttpGet("pools/{poolId}/payoutbatches")]
+    public async Task<Responses.AdminPayoutBatch[]> GetPayoutBatchesAsync(string poolId, [FromQuery] int page = 0, [FromQuery] int pageSize = 50)
+    {
+        var pool = GetPool(poolId);
+        pageSize = ClampPageSize(pageSize);
+        page = ClampPage(page);
+
+        var batches = await cf.Run(con => payoutBatchRepo.PageAsync(con, pool.Id, page, pageSize, HttpContext.RequestAborted));
+        return batches.Select(ToResponse).ToArray();
+    }
+
+    /// <summary>
+    /// Resolves a payout batch whose outcome is unknown (status "pending" after a crash between send and
+    /// record). outcome=sent&amp;txid=... marks it sent; the next payout run then inserts the payments and
+    /// debits the balances. outcome=notsent marks it failed; the balances are paid on the next run.
+    /// Check the wallet before choosing: "sent" on a batch that never left the wallet keeps the coins and
+    /// deletes the miners' balances, "notsent" on a batch that was sent pays everyone twice.
+    /// </summary>
+    [HttpPost("pools/{poolId}/payoutbatches/{id}/resolve")]
+    public async Task<Responses.AdminPayoutBatch> ResolvePayoutBatchAsync(string poolId, long id, [FromQuery] string outcome, [FromQuery] string txid = null)
+    {
+        var pool = GetPool(poolId);
+        var ct = HttpContext.RequestAborted;
+
+        var batch = await cf.Run(con => payoutBatchRepo.GetAsync(con, pool.Id, id, ct));
+        if(batch == null)
+            throw new ApiException("Unknown payout batch", HttpStatusCode.NotFound);
+
+        if(batch.Status != Persistence.Model.PayoutBatchStatus.Pending)
+            throw new ApiException($"Payout batch {id} is {batch.Status.ToString().ToLowerInvariant()}, only pending batches can be resolved", HttpStatusCode.BadRequest);
+
+        switch(outcome?.ToLowerInvariant())
+        {
+            case "sent":
+                if(string.IsNullOrWhiteSpace(txid))
+                    throw new ApiException("outcome=sent requires txid", HttpStatusCode.BadRequest);
+
+                if(await cf.RunTx((con, tx) => payoutBatchRepo.UpdateStatusAsync(con, tx, id, Persistence.Model.PayoutBatchStatus.Sent, txid.Trim(), "resolved by operator: sent", DateTime.UtcNow, Persistence.Model.PayoutBatchStatus.Pending)) == 0)
+                    throw new ApiException($"Payout batch {id} changed state while you were resolving it; reload and check its status", HttpStatusCode.Conflict);
+
+                logger.Warn(() => $"Payout batch {id} of pool {pool.Id} resolved by operator as SENT (tx {txid}); payments are persisted on the next payout run");
+                break;
+
+            case "notsent":
+                if(await cf.RunTx((con, tx) => payoutBatchRepo.UpdateStatusAsync(con, tx, id, Persistence.Model.PayoutBatchStatus.Failed, null, "resolved by operator: not sent", DateTime.UtcNow, Persistence.Model.PayoutBatchStatus.Pending)) == 0)
+                    throw new ApiException($"Payout batch {id} changed state while you were resolving it; reload and check its status", HttpStatusCode.Conflict);
+
+                logger.Warn(() => $"Payout batch {id} of pool {pool.Id} resolved by operator as NOT SENT; its balances are paid on the next payout run");
+                break;
+
+            default:
+                throw new ApiException("outcome must be 'sent' or 'notsent'", HttpStatusCode.BadRequest);
+        }
+
+        return ToResponse(await cf.Run(con => payoutBatchRepo.GetAsync(con, pool.Id, id, ct)));
+    }
+
+    #endregion // Payout batches
 
     #endregion // Actions
 }

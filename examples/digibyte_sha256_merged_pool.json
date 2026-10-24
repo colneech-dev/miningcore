@@ -1,0 +1,128 @@
+{
+    "//": "DigiByte SHA256d pool that merge-mines standard AuxPoW chains plus RSK and Hathor. Every merged-mining option lives at pool level (BitcoinPoolConfigExtra). Remove the sections you do not run.",
+    "logging": {
+        "level": "info",
+        "enableConsoleLog": true,
+        "enableConsoleColors": true,
+        "logBaseDirectory": "",
+        "perPoolLogFile": false
+    },
+    "banning": {
+        "manager": "Integrated",
+        "banOnJunkReceive": true,
+        "banOnInvalidShares": false
+    },
+    "notifications": {
+        "enabled": false
+    },
+    "persistence": {
+        "postgres": {
+            "host": "127.0.0.1",
+            "port": 5432,
+            "user": "miningcore",
+            "password": "password",
+            "database": "miningcore"
+        }
+    },
+    "//shareRecoveryFile": "top-level cluster setting; recovered-aux-blocks.jsonl is written next to it",
+    "shareRecoveryFile": "recovered-shares.txt",
+    "paymentProcessing": {
+        "enabled": true,
+        "interval": 600
+    },
+    "api": {
+        "enabled": true,
+        "listenAddress": "127.0.0.1",
+        "port": 4000,
+        "//corsOrigins": "optional: browser origins allowed to call the API cross-origin; empty allows any",
+        "corsOrigins": []
+    },
+    "pools": [{
+        "id": "dgb-sha256",
+        "enabled": true,
+        "coin": "digibyte-sha256",
+        "address": "REPLACE_WITH_DIGIBYTE_ADDRESS",
+        "rewardRecipients": [
+            { "address": "REPLACE_WITH_POOL_FEE_ADDRESS", "percentage": 1 }
+        ],
+        "blockRefreshInterval": 500,
+        "jobRebroadcastTimeout": 10,
+        "clientConnectionTimeout": 600,
+        "banning": { "enabled": true, "time": 600, "invalidPercent": 50, "checkThreshold": 50 },
+        "ports": {
+            "3062": {
+                "listenAddress": "0.0.0.0",
+                "difficulty": 1024,
+                "varDiff": { "minDiff": 512, "targetTime": 15, "retargetTime": 90, "variancePercent": 30 }
+            }
+        },
+        "daemons": [{
+            "host": "127.0.0.1",
+            "port": 14022,
+            "user": "user",
+            "password": "password",
+            "zmqBlockNotifySocket": "tcp://127.0.0.1:28332",
+            "//requestTimeoutSeconds": "per-request RPC timeout, default 30",
+            "//allowInsecureTls": "only with ssl: true and a self-signed certificate"
+        }],
+        "paymentProcessing": {
+            "enabled": true,
+            "minimumPayment": 0.5,
+            "payoutScheme": "PPLNS",
+            "payoutSchemeConfig": { "factor": 2.0 }
+        },
+
+        "//auxChains": "Standard AuxPoW (Namecoin-style). chainId is the slot in the aux merkle tree and must be unique across auxChains, rskChain and hathorChain. decimals defaults to 8; diff1 is only for chains whose difficulty is not measured against Bitcoin's difficulty-1 target.",
+        "auxChains": [
+            {
+                "id": "syscoin",
+                "name": "Syscoin",
+                "chainId": 16,
+                "address": "REPLACE_WITH_SYSCOIN_ADDRESS",
+                "daemons": [{ "host": "127.0.0.1", "port": 8370, "user": "user", "password": "password" }],
+                "getAuxBlockMethod": "createauxblock",
+                "submitAuxBlockMethod": "submitauxblock",
+                "pollIntervalSeconds": 10,
+                "zmqBlockNotifySocket": "tcp://127.0.0.1:28333",
+                "requiredConfirmations": 100,
+                "decimals": 8,
+                "explorerBlockLink": "https://sys1.bcfn.ca/block/{hash}",
+                "silentErrors": false
+            },
+            {
+                "id": "namecoin",
+                "name": "Namecoin",
+                "chainId": 1,
+                "address": "REPLACE_WITH_NAMECOIN_ADDRESS",
+                "daemons": [{ "host": "127.0.0.1", "port": 8336, "user": "user", "password": "password" }],
+                "requiredConfirmations": 100,
+                "explorerBlockLink": "https://namecoin.info/block/{hash}"
+            }
+        ],
+
+        "//rskChain": "Rootstock via mnr_getWork / mnr_submitBitcoinBlock. The RSKj node must run with miner.server.enabled=true. The record is stored by merged-mining hash and resolved to the real block by the confirmer.",
+        "rskChain": {
+            "id": "rsk",
+            "name": "Rootstock (RSK)",
+            "chainId": 151,
+            "daemons": [{ "host": "127.0.0.1", "port": 4444 }],
+            "pollIntervalSeconds": 5,
+            "requiredConfirmations": 100,
+            "explorerBlockLink": "https://explorer.rootstock.io/block/{hash}",
+            "silentErrors": false
+        },
+
+        "//hathorChain": "Hathor via hathor-core's HTTP API (RFC 0006). address is an HTR wallet address, not the node's.",
+        "hathorChain": {
+            "id": "hathor",
+            "name": "Hathor (HTR)",
+            "chainId": 4646,
+            "address": "REPLACE_WITH_HATHOR_ADDRESS",
+            "daemons": [{ "host": "127.0.0.1", "port": 8080 }],
+            "pollIntervalSeconds": 5,
+            "requiredConfirmations": 300,
+            "explorerBlockLink": "https://explorer.hathor.network/transaction/{hash}",
+            "silentErrors": false
+        }
+    }]
+}

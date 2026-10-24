@@ -58,6 +58,14 @@ public static class AuxPowSerializer
     }
 
     /// <summary>
+    /// Slot of a chain in the aux tree. Namecoin-style daemons expect the LCG slot (GetExpectedIndex).
+    /// Daemons that only enforce "chain index == nonce % treeSize" (e.g. ElevenSeventyFive) expect
+    /// <paramref name="slotByNonce"/> placement instead, which ignores the chain id.
+    /// </summary>
+    public static uint GetSlot(uint nonce, int chainId, int h, bool slotByNonce)
+        => slotByNonce ? (h == 0 ? 0u : nonce % (1u << h)) : GetExpectedIndex(nonce, chainId, h);
+
+    /// <summary>
     /// Builds the aux chain merkle tree from all active aux blocks.
     /// Returns a flat binary-tree node array (root at index 1), the tree size,
     /// and the nonce that was chosen to give each chain a unique LCG-derived slot.
@@ -90,7 +98,7 @@ public static class AuxPowSerializer
         var usedSlots = new HashSet<int>(activeAuxBlocks.Count);
         foreach(var aux in activeAuxBlocks)
         {
-            int slot = (int) GetExpectedIndex(nonce, aux.ChainId, h);
+            int slot = (int) GetSlot(nonce, aux.ChainId, h, aux.SlotByNonce);
             if(!usedSlots.Add(slot))
                 throw new InvalidOperationException($"AuxPoW tree slot collision for chainId={aux.ChainId} at slot {slot} — FindNonce should have prevented this");
             nodes[treeSize + slot] = aux.Hash.HexToByteArray().Reverse().ToArray();
@@ -114,13 +122,13 @@ public static class AuxPowSerializer
     /// Returns the branch hashes and the LCG-derived leaf index for AuxPoW serialization.
     /// </summary>
     /// <param name="nonce">The nonce returned by BuildAuxTree (embedded in the coinbase commitment)</param>
-    public static (List<byte[]> branch, uint leafIndex) GetAuxMerkleBranch(byte[][]? nodes, int treeSize, uint nonce, int chainId)
+    public static (List<byte[]> branch, uint leafIndex) GetAuxMerkleBranch(byte[][]? nodes, int treeSize, uint nonce, int chainId, bool slotByNonce = false)
     {
         if(nodes == null || treeSize <= 0)
             return (new List<byte[]>(), 0u);
 
         int h = Log2(treeSize);
-        uint leafIndex = GetExpectedIndex(nonce, chainId, h);
+        uint leafIndex = GetSlot(nonce, chainId, h, slotByNonce);
         var branch = new List<byte[]>();
 
         int idx = treeSize + (int) leafIndex;
@@ -231,7 +239,7 @@ public static class AuxPowSerializer
         int h = Log2(treeSize);
         var slots = new HashSet<uint>(blocks.Count);
         foreach(var b in blocks)
-            if(!slots.Add(GetExpectedIndex(nonce, b.ChainId, h)))
+            if(!slots.Add(GetSlot(nonce, b.ChainId, h, b.SlotByNonce)))
                 return true;
         return false;
     }

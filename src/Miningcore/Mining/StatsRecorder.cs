@@ -6,7 +6,7 @@ using System.Reactive.Concurrency;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using Autofac;
-using AutoMapper;
+using Miningcore.Mapping;
 using Microsoft.Extensions.Hosting;
 using Miningcore.Configuration;
 using Miningcore.Contracts;
@@ -29,7 +29,7 @@ public class StatsRecorder : BackgroundService
         IMasterClock clock,
         IConnectionFactory cf,
         IMessageBus messageBus,
-        IMapper mapper,
+        MiningcoreMapper mapper,
         ClusterConfig clusterConfig,
         IShareRepository shareRepo,
         IStatsRepository statsRepo)
@@ -61,7 +61,7 @@ public class StatsRecorder : BackgroundService
     private readonly IMasterClock clock;
     private readonly IStatsRepository statsRepo;
     private readonly IConnectionFactory cf;
-    private readonly IMapper mapper;
+    private readonly MiningcoreMapper mapper;
     private readonly IMessageBus messageBus;
     private readonly IShareRepository shareRepo;
     private readonly ClusterConfig clusterConfig;
@@ -158,33 +158,14 @@ public class StatsRecorder : BackgroundService
 
                 messageBus.NotifyHashrateUpdated(pool.Config.Id, 0);
 
-                logger.Info(() => $"[{poolId}] Reset performance stats for pool");
-            }
-
-            // reset on inactivity timeout
-            if (!hasRecentShares && result.Length > 0)
-            {
-                pool.PoolStats.ConnectedMiners = 0;
-                pool.PoolStats.ConnectedWorkers = 0;
-                pool.PoolStats.PoolHashrate = 0;
-                pool.PoolStats.SharesPerSecond = 0;
-
-                messageBus.NotifyHashrateUpdated(pool.Config.Id, 0);
-
-                logger.Info(() => $"[{poolId}] Reset performance stats for pool (inactivity timeout)");
+                // result.Length > 0 here means shares exist but the newest is older than the inactivity timeout
+                logger.Info(() => $"[{poolId}] Reset performance stats for pool{(result.Length > 0 ? " (inactivity timeout)" : "")}");
             }
 
             // persist
             await cf.RunTx(async (con, tx) =>
             {
-                var mapped = new Persistence.Model.PoolStats
-                {
-                    PoolId = poolId,
-                    Created = now
-                };
-
-                mapper.Map(pool.PoolStats, mapped);
-                mapper.Map(pool.NetworkStats, mapped);
+                var mapped = mapper.ToModel(pool.PoolStats, pool.NetworkStats, poolId, now);
 
                 await statsRepo.InsertPoolStatsAsync(con, tx, mapped, ct);
             });

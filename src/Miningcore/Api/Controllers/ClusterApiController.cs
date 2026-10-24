@@ -42,13 +42,15 @@ public class ClusterApiController : ApiControllerBase
     public async Task<Responses.Block[]> PageBlocksPagedAsync(
         [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
     {
+        pageSize = ClampPageSize(pageSize);
+        page = ClampPage(page);
         var ct = HttpContext.RequestAborted;
         var blockStates = state is { Length: > 0 } ?
             state :
             new[] { BlockStatus.Confirmed, BlockStatus.Pending, BlockStatus.Orphaned };
 
         var blocks = (await cf.Run(con => blocksRepo.PageBlocksAsync(con, blockStates, page, pageSize, ct)))
-            .Select(mapper.Map<Responses.Block>)
+            .Select(mapper.ToResponse)
             .Where(x => enabledPools.Contains(x.PoolId))
             .ToArray();
 
@@ -89,13 +91,15 @@ public class ClusterApiController : ApiControllerBase
     public async Task<Responses.AuxBlock[]> PageAuxBlocksAsync(
         [FromQuery] int page, [FromQuery] int pageSize = 15, [FromQuery] BlockStatus[] state = null)
     {
+        pageSize = ClampPageSize(pageSize);
+        page = ClampPage(page);
         var ct = HttpContext.RequestAborted;
         var blockStates = state is { Length: > 0 } ?
             state :
             new[] { BlockStatus.Confirmed, BlockStatus.Pending, BlockStatus.Orphaned };
 
         return (await cf.Run(con => auxBlocksRepo.PageAuxBlocksAsync(con, blockStates, page, pageSize, ct)))
-            .Select(mapper.Map<Responses.AuxBlock>)
+            .Select(mapper.ToResponse)
             .Where(x => enabledPools.Contains(x.PoolId))
             .ToArray();
     }
@@ -103,7 +107,7 @@ public class ClusterApiController : ApiControllerBase
     [HttpGet("auxchains")]
     public Responses.AuxChainStat[] GetAuxChains()
     {
-        var result = new Dictionary<string, Responses.AuxChainStat>();
+        var sources = new List<AuxChainSource>();
 
         foreach(var poolConfig in clusterConfig.Pools.Where(x => x.Enabled))
         {
@@ -113,45 +117,39 @@ public class ClusterApiController : ApiControllerBase
             var algorithm = poolConfig.Template?.GetAlgorithmName() ?? "unknown";
             var poolHashrate = pool.PoolStats?.PoolHashrate ?? 0;
 
+            // Rootstock and Hathor are merge-mined outside the AuxPoW tree, so they are not in AuxManagers; give them a
+            // card too. Neither daemon reports a network hashrate, so it is estimated from the difficulty.
+            if(auxPool.RskManager is { } rsk)
+                sources.Add(new AuxChainSource
+                {
+                    PoolId = poolConfig.Id, Algorithm = algorithm, PoolHashrate = poolHashrate,
+                    Id = rsk.Config.Id, Name = rsk.Config.Name, ChainId = rsk.Config.ChainId,
+                    ExplorerBlockLink = rsk.Config.ExplorerBlockLink, Block = rsk.CurrentAuxBlock,
+                    EstimateHashrateBlockTimeSeconds = rsk.Config.BlockTimeSeconds,
+                });
+
+            if(auxPool.HathorManager is { } hathor)
+                sources.Add(new AuxChainSource
+                {
+                    PoolId = poolConfig.Id, Algorithm = algorithm, PoolHashrate = poolHashrate,
+                    Id = hathor.Config.Id, Name = hathor.Config.Name, ChainId = hathor.Config.ChainId,
+                    ExplorerBlockLink = hathor.Config.ExplorerBlockLink, Block = hathor.CurrentAuxBlock,
+                    EstimateHashrateBlockTimeSeconds = hathor.Config.BlockTimeSeconds,
+                });
+
             foreach(var mgr in auxPool.AuxManagers)
-            {
-                if(!result.TryGetValue(mgr.Config.Id, out var stat))
+                sources.Add(new AuxChainSource
                 {
-                    stat = new Responses.AuxChainStat
-                    {
-                        Id = mgr.Config.Id,
-                        Name = mgr.Config.Name,
-                        ChainId = mgr.Config.ChainId,
-                        Algorithm = algorithm,
-                        ExplorerBlockLink = mgr.Config.ExplorerBlockLink,
-                        PoolIds = Array.Empty<string>(),
-                    };
-                    result[mgr.Config.Id] = stat;
-                }
-
-                stat.PoolIds = stat.PoolIds.Append(poolConfig.Id).ToArray();
-                stat.PoolHashrate += poolHashrate;
-
-                var block = mgr.CurrentAuxBlock;
-                if(block != null && (stat.FetchedAt == null || block.FetchedAt > stat.FetchedAt))
-                {
-                    stat.BlockHeight = block.Height;
-                    stat.FetchedAt = block.FetchedAt;
-
-                    if(!string.IsNullOrEmpty(block.Bits))
-                    {
-                        try
-                        {
-                            var nbTarget = new global::NBitcoin.Target(block.Bits.HexToByteArray());
-                            stat.NetworkDifficulty = nbTarget.Difficulty;
-                        }
-                        catch { }
-                    }
-                }
-            }
+                    PoolId = poolConfig.Id, Algorithm = algorithm, PoolHashrate = poolHashrate,
+                    Id = mgr.Config.Id, Name = mgr.Config.Name, ChainId = mgr.Config.ChainId,
+                    ExplorerBlockLink = mgr.Config.ExplorerBlockLink, Block = mgr.CurrentAuxBlock,
+                    Diff1 = mgr.Config.Diff1,
+                    NetworkHashrate = mgr.NetworkHashrate, NetworkHashrateAt = mgr.NetworkHashrateAt,
+                    EstimateHashrateBlockTimeSeconds = mgr.Config.HashrateBlockTimeSeconds,
+                });
         }
 
-        return result.Values.OrderBy(x => x.Name).ToArray();
+        return AuxChainStatsBuilder.Build(sources);
     }
 
     #endregion // Actions

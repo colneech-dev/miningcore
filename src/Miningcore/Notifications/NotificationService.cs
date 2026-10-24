@@ -1,3 +1,4 @@
+using System.Net;
 using System.Reactive;
 using System.Reactive.Concurrency;
 using System.Reactive.Linq;
@@ -26,7 +27,7 @@ public class NotificationService : BackgroundService
         Contract.RequiresNonNull(messageBus);
 
         this.clusterConfig = clusterConfig;
-        emailSenderConfig = clusterConfig.Notifications.Email;
+        emailSenderConfig = clusterConfig.Notifications?.Email;
         this.messageBus = messageBus;
         this.pushoverClient = pushoverClient;
 
@@ -109,13 +110,20 @@ public class NotificationService : BackgroundService
 
     public async Task SendEmailAsync(string recipient, string subject, string body, CancellationToken ct)
     {
+        if(emailSenderConfig == null || string.IsNullOrEmpty(emailSenderConfig.Host))
+        {
+            logger.Warn(() => $"Not sending '{subject.ToLower()}' email: notifications.email is not configured");
+            return;
+        }
+
         logger.Info(() => $"Sending '{subject.ToLower()}' email to {recipient}");
 
         var message = new MimeMessage();
         message.From.Add(new MailboxAddress(emailSenderConfig.FromName, emailSenderConfig.FromAddress));
         message.To.Add(new MailboxAddress("", recipient));
         message.Subject = subject;
-        message.Body = new TextPart("html") { Text = body };
+        // bodies are assembled from daemon error text and pool ids; encode so nothing renders as markup
+        message.Body = new TextPart("html") { Text = WebUtility.HtmlEncode(body) };
 
         using(var client = new SmtpClient())
         {

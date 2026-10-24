@@ -12,6 +12,17 @@ This fork adds the following changes on top of upstream:
 - **`worker` field in blocks API** — the `/api/pools/{id}/blocks` response now includes the `worker` name that found each block; stored at block submission time
 - Database migration: `ALTER TABLE poolstats ADD COLUMN connectedworkers integer NOT NULL DEFAULT 0;`
 - Database migration: `ALTER TABLE blocks ADD COLUMN worker text;` (column already existed in schema but was not populated)
+- **Hash difficulty on blocks and aux blocks** — `blocks.difficulty`, `auxblocks.difficulty` and `auxblocks.networkdifficulty` record the actual share hash difficulty and the aux chain's network difficulty at submit time
+- Database migration: `src/Miningcore/Persistence/Postgres/Scripts/add_block_difficulty.sql` (required; without it every block insert fails on a database created before Oct 2026)
+- Database migration: `src/Miningcore/Persistence/Postgres/Scripts/add_auxblocks.sql` creates the `auxblocks` table for merged mining
+- **Daemon options** — `allowInsecureTls` (accept self-signed certificates; off by default since Oct 2026, previously every daemon connection accepted any certificate) and `requestTimeoutSeconds` (per-request RPC timeout, default 30) on any daemon endpoint
+- **API options** — `corsOrigins` restricts which browser origins may call the API cross-origin (empty allows any, as before). Admin endpoints that change state (`logging/level`, `payment/processing/*`) take POST
+- **Aux chain options** — `decimals` (default 8) and `diff1` per `auxChains[]` entry
+- **Idempotent payouts** — a `payoutbatches` row is written before every send and completed after it. A batch left `sent` is finished on the next run instead of paying again; a batch left `pending` (crash between send and record) halts payouts for that pool until resolved with `POST /api/admin/pools/{id}/payoutbatches/{batchId}/resolve?outcome=sent&txid=...` or `?outcome=notsent`; `GET /api/admin/pools/{id}/payoutbatches` lists them. Bitcoin-family, Equihash and Handshake payouts use it; other families still use the old direct persistence
+- Database migration: `src/Miningcore/Persistence/Postgres/Scripts/add_payoutbatches.sql` (required for payouts)
+- **Merged mining example** — `examples/digibyte_sha256_merged_pool.json` covers `auxChains`, `rskChain` and `hathorChain`
+- **Tests without native libraries** — `dotnet test` skips the hashing tests that need `libcryptonight`, `libcryptonote`, `librandomx` or `librandomarq` when they are not built, with the reason in the output
+- All stored difficulties are in daemon units (no stratum share multiplier); see `docs/decisions.md`. Pools with a share multiplier other than 1 that recorded blocks before this change should run `src/Miningcore/Persistence/Postgres/Scripts/backfill_difficulty_units.sh <config.json> <cutoff> <coins.json>... | psql -d miningcore` once, where `<cutoff>` is when the new build started writing (ISO 8601; rows created before it are converted, each pool at most once)
 
 ---
 
@@ -50,28 +61,23 @@ cd miningcore
 Depending on your OS Version run either of these scripts:
 
 ```console
-./build-debian-11.sh
-```
-or
-```console
 ./build-debian-12.sh
-```
-or
-```console
-./build-ubuntu-20.04.sh
-```
-or
-```console
-./build-ubuntu-21.04.sh
 ```
 or
 ```console
 ./build-ubuntu-22.04.sh
 ```
+(22.04 has no .NET 10 apt package; the script installs the SDK with Microsoft's installer script)
+or
+```console
+./build-ubuntu-24.04.sh
+```
+
+Debian 11 and Ubuntu 20.04/21.04 are no longer supported: they cannot install the .NET 10 SDK from a package feed. Use the Docker build below on those systems.
 
 ## Building on Windows
 
-Download and install the [.NET 6 SDK](https://dotnet.microsoft.com/download/dotnet/6.0)
+Download and install the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
 
 ```dosbatch
 git clone https://github.com/xiaolin1579/miningcore
@@ -94,14 +100,14 @@ cd miningcore
 Then build using Docker:
 
 ```console
-docker run --rm -v $(pwd):/app -w /app mcr.microsoft.com/dotnet/sdk:6.0 /bin/bash -c 'apt update && apt install cmake clang ninja-build build-essential libssl-dev pkg-config libboost-all-dev libsodium-dev libzmq5 libzmq3-dev golang-go libgmp-dev libc++-dev zlib1g-dev -y --no-install-recommends && cd src/Miningcore && dotnet publish -c Release --framework net6.0 -o /app/build/'
+docker run --rm -v $(pwd):/app -w /app mcr.microsoft.com/dotnet/sdk:10.0 /bin/bash -c 'apt update && apt install cmake clang ninja-build build-essential libssl-dev pkg-config libboost-all-dev libsodium-dev libzmq5 libzmq3-dev golang-go libgmp-dev libc++-dev zlib1g-dev -y --no-install-recommends && cd src/Miningcore && dotnet publish -c Release --framework net10.0 -o /app/build/'
 ```
 It will use a Linux container, you will build a Linux executable that will not run on Windows or macOS. You can use a runtime argument (-r) to specify the type of assets that you want to publish (if they don't match the SDK container). The following examples assume you want assets that match your host operating system, and use runtime arguments to ensure that.
 
 For macOS:
 
 ```console
-docker run --rm -v $(pwd):/app -w /app mcr.microsoft.com/dotnet/sdk:6.0 /bin/bash -c 'apt update && apt install cmake clang ninja-build build-essential libssl-dev pkg-config libboost-all-dev libsodium-dev libzmq5 libzmq3-dev golang-go libgmp-dev libc++-dev zlib1g-dev -y --no-install-recommends && cd src/Miningcore && dotnet publish -c Release --framework net6.0 -o /app/build/ -r osx-x64 --self-contained false'
+docker run --rm -v $(pwd):/app -w /app mcr.microsoft.com/dotnet/sdk:10.0 /bin/bash -c 'apt update && apt install cmake clang ninja-build build-essential libssl-dev pkg-config libboost-all-dev libsodium-dev libzmq5 libzmq3-dev golang-go libgmp-dev libc++-dev zlib1g-dev -y --no-install-recommends && cd src/Miningcore && dotnet publish -c Release --framework net10.0 -o /app/build/ -r osx-x64 --self-contained false'
 ```
 
 ### Building and Running Miningcore from a container
@@ -132,7 +138,7 @@ docker run -d \
 For Windows using Linux container:
 
 ```console
-docker run --rm -v $(pwd):/app -w /app mcr.microsoft.com/dotnet/sdk:6.0 /bin/bash -c 'apt update && apt install cmake clang ninja-build build-essential libssl-dev pkg-config libboost-all-dev libsodium-dev libzmq5 libzmq3-dev golang-go libgmp-dev libc++-dev zlib1g-dev -y --no-install-recommends && cd src/Miningcore && dotnet publish -c Release --framework net6.0 -o /app/build/ -r win-x64 --self-contained false'
+docker run --rm -v $(pwd):/app -w /app mcr.microsoft.com/dotnet/sdk:10.0 /bin/bash -c 'apt update && apt install cmake clang ninja-build build-essential libssl-dev pkg-config libboost-all-dev libsodium-dev libzmq5 libzmq3-dev golang-go libgmp-dev libc++-dev zlib1g-dev -y --no-install-recommends && cd src/Miningcore && dotnet publish -c Release --framework net10.0 -o /app/build/ -r win-x64 --self-contained false'
 ```
 
 To delete used images and containers you can run after all:

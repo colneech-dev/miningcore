@@ -4,6 +4,7 @@ using System.Text;
 using Miningcore.Crypto.Hashing.Algorithms;
 using Miningcore.Crypto.Hashing.Equihash;
 using Miningcore.Extensions;
+using Miningcore.Native;
 using Miningcore.Tests.Util;
 using Xunit;
 
@@ -101,7 +102,46 @@ public class HashingTests : TestBase
         hasher.Digest(testValue2, hash, 0ul);
         var result = hash.ToHexString();
 
-        Assert.Equal("a7a694a0464fad7d34b5ef3cd28a1caffd8410069e091195fb196f28b298f6dc", result);
+        // Vector regenerated 2026-10-18 from a libmultihash build that passes the DigiByte
+        // consensus gate (verify_odocrypt_so.c). The previous value, a7a694a0...b298f6dc,
+        // had been produced by the pre-2026-06-11 implementation that the consensus fix
+        // (d3b7584) replaced, so this test was asserting the known-bad output.
+        Assert.Equal("5a37cff97820c792e1cdb065ec2da63902825dbf3fb529263f5d95247d894d3c", result);
+    }
+
+    [Fact]
+    public void Odocrypt_Key_Is_NTime_Rounded_Down_To_The_Interval()
+    {
+        // The Odocrypt_Hash vector below uses nTime 0, where the correct formula and the old buggy `nTime / interval`
+        // both give key 0, so it cannot catch that regression. This pins the formula on realistic times.
+        Assert.Equal(0u, Odocrypt.OdoKey(0));
+        Assert.Equal(0u, Odocrypt.OdoKey(863999));
+        Assert.Equal(864000u, Odocrypt.OdoKey(864000));
+        Assert.Equal(864000u, Odocrypt.OdoKey(1727999));
+        Assert.Equal(1699488000u, Odocrypt.OdoKey(1700000123));   // not 1700000123 / 864000 = 1967
+        Assert.Equal(Odocrypt.OdoKey(1699488000), Odocrypt.OdoKey(1700351999));
+        Assert.NotEqual(Odocrypt.OdoKey(1700351999), Odocrypt.OdoKey(1700352000));
+    }
+
+    [NativeLibFact("libmultihash")]
+    public unsafe void Odocrypt_Native_Matches_The_DigiByte_Reference_Vector()
+    {
+        // Same vector as src/Native/libmultihash/verify_odocrypt_so.c and test_odocrypt.cpp (header byte i*7+3,
+        // OdoKey 0x683b9800), whose expected value comes from the DigiByte odo-miner reference. Unlike Odocrypt_Hash,
+        // which pins this implementation's own output, this ties the native library to that external reference
+        // inside `dotnet test`, with a non-zero key.
+        var header = new byte[80];
+        for(var i = 0; i < 80; i++)
+            header[i] = (byte) (i * 7 + 3);
+
+        var hash = new byte[32];
+        fixed(byte* input = header)
+        fixed(byte* output = hash)
+        {
+            Multihash.odocrypt(input, output, 80, 0x683b9800u);
+        }
+
+        Assert.Equal("25b32ac37d536e657e514b0c99fcc69ae73a425b3e26b75fd8b912dbf527c1ad", hash.ToHexString());
     }
 
     [Fact]
@@ -438,7 +478,7 @@ public class HashingTests : TestBase
         Assert.Equal("5ba2b8af7b58e359e98087ff8860ded5cdb72adcb46fee05151db1d235c81918", result);
     }
 
-    [Fact]
+    [NativeLibFact("libcryptonight")]
     public void Ghostrider_Hash()
     {
         var hasher = new Ghostrider();

@@ -35,6 +35,9 @@ public class RskChainConfig
     /// </summary>
     public bool SilentErrors { get; set; } = false;
 
+    /// <summary>Target block time in seconds. Only used to estimate the network hashrate from the difficulty. Defaults to 30.</summary>
+    public int BlockTimeSeconds { get; set; } = 30;
+
     /// <summary>Block explorer URL for RSK block hashes. Use {hash} as placeholder.</summary>
     public string ExplorerBlockLink { get; set; }
 

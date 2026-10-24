@@ -964,6 +964,18 @@ public class DaemonEndpointConfig : AuthenticatedNetworkEndpointConfig
     public string HttpPath { get; set; }
 
     /// <summary>
+    /// Accept any TLS certificate from this daemon (self-signed, hostname mismatch). Off by default,
+    /// so certificates are validated like any other HTTPS client. Only relevant with ssl or http2.
+    /// Until Oct 2026 validation was disabled for every daemon connection.
+    /// </summary>
+    public bool AllowInsecureTls { get; set; }
+
+    /// <summary>
+    /// Per-request timeout in seconds for RPC calls to this daemon. Defaults to 30.
+    /// </summary>
+    public int? RequestTimeoutSeconds { get; set; }
+
+    /// <summary>
     /// Arbitrary extension data
     /// </summary>
     [JsonExtensionData]
@@ -1241,6 +1253,11 @@ public partial class ApiConfig
     /// If this list null or empty, the default is 127.0.0.1
     /// </summary>
     public string[] AdminIpWhitelist { get; set; }
+
+    /// <summary>
+    /// Browser origins allowed to call the API cross-origin (CORS). Null or empty allows any origin.
+    /// </summary>
+    public string[] CorsOrigins { get; set; }
 
     /// <summary>
     /// Optional bearer token required for all /api/admin requests.

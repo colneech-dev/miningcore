@@ -525,6 +525,29 @@ public class BitcoinJob
             return blockHeader.ToBytes();
     }
 
+    private static int targetMismatchWarned;   // 0/1; the (bits, target) pair changes every block, so keying on it would warn per block
+
+    private void WarnOnceIfTargetDisagrees(Target bitsTarget)
+    {
+        if(string.IsNullOrEmpty(BlockTemplate.Target))
+            return;
+
+        try
+        {
+            if(new uint256(BlockTemplate.Target) == bitsTarget.ToUInt256())
+                return;
+
+            if(Interlocked.Exchange(ref targetMismatchWarned, 1) == 0)
+                logger.Warn(() => $"Block template 'target' {BlockTemplate.Target} does not match 'bits' {BlockTemplate.Bits}; using bits for difficulty and block target (further mismatches are logged at Debug)");
+            else
+                logger.Debug(() => $"Block template 'target' {BlockTemplate.Target} does not match 'bits' {BlockTemplate.Bits}");
+        }
+        catch(Exception)
+        {
+            // unparseable target: bits is authoritative anyway
+        }
+    }
+
     private static bool IsShareDifficultyAcceptable(double shareDiff, double requiredDifficulty)
     {
         // Some miners and daemons can report work that is slightly under the pool's exact target
@@ -582,8 +605,13 @@ public class BitcoinJob
         {
             BlockHeight = BlockTemplate.Height,
             NetworkDifficulty = Difficulty,
-            Difficulty = stratumDifficulty / shareMultiplier,
-            HashDifficulty = shareDiff,
+            // a share inside the tolerance band below the worker's difficulty is credited what its hash
+            // actually proved rather than the full stratum difficulty (daemon units, see DifficultyUnits)
+            Difficulty = Math.Min(stratumDifficulty, shareDiff) / shareMultiplier,
+            // daemon units, like Difficulty and NetworkDifficulty: shareDiff carries the stratum
+            // share multiplier for the comparison with the worker's stratum difficulty above, and
+            // the multiplier is a display convention that must not reach the database
+            HashDifficulty = shareDiff / shareMultiplier,
         };
 
         // Check aux chain targets for merged mining
@@ -1165,7 +1193,12 @@ public class BitcoinJob
 
         scriptSigFinalBytes = new Script(Op.GetPushOp(Encoding.UTF8.GetBytes(coinbaseString))).ToBytes();
 
-        Difficulty = new Target(System.Numerics.BigInteger.Parse(BlockTemplate.Target, NumberStyles.HexNumber)).Difficulty;
+        // Difficulty comes from "bits", like the block target further down: some daemons (DGB v9)
+        // return "target" in the wrong byte order, and a job whose difficulty and target disagree
+        // records wrong network difficulty on every share. A disagreeing "target" is logged once.
+        var bitsTarget = new Target(BlockTemplate.Bits.HexToByteArray());
+        Difficulty = bitsTarget.Difficulty;
+        WarnOnceIfTargetDisagrees(bitsTarget);
 
         extraNoncePlaceHolderLength = BitcoinConstants.ExtranoncePlaceHolderLength;
         this.isPoS = isPoS;
@@ -1212,7 +1245,7 @@ public class BitcoinJob
                 founderParameters.FounderReward = frJToken.ToObject<FounderRewardEntry>();
             }
 
-            logger.Info(() => $"HasFounderFee: founderParameters={founderParameters != null}, " +
+            logger.Debug(() => $"HasFounderFee: founderParameters={founderParameters != null}, " +
                 $"Founder={founderParameters?.Founder?.Type}, " +
                 $"FounderReward={founderParameters?.FounderReward != null}, " +
                 $"Payee={founderParameters?.FounderReward?.Founderpayee}, " +

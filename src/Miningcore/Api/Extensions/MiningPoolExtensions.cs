@@ -1,4 +1,4 @@
-using AutoMapper;
+using Miningcore.Mapping;
 using Miningcore.Api.Responses;
 using Miningcore.Blockchain;
 using Miningcore.Blockchain.Alephium.Configuration;
@@ -15,12 +15,12 @@ namespace Miningcore.Api.Extensions;
 
 public static class MiningPoolExtensions
 {
-    public static PoolInfo ToPoolInfo(this PoolConfig poolConfig, IMapper mapper, Persistence.Model.PoolStats stats, IMiningPool pool)
+    public static PoolInfo ToPoolInfo(this PoolConfig poolConfig, MiningcoreMapper mapper, Persistence.Model.PoolStats stats, IMiningPool pool)
     {
-        var poolInfo = mapper.Map<PoolInfo>(poolConfig);
+        var poolInfo = mapper.ToPoolInfo(poolConfig);
 
-        poolInfo.PoolStats = mapper.Map<PoolStats>(stats);
-        poolInfo.NetworkStats = pool?.NetworkStats ?? (stats != null ? mapper.Map<BlockchainStats>(stats) : new BlockchainStats());
+        poolInfo.PoolStats = mapper.ToMiningStats(stats);
+        poolInfo.NetworkStats = pool?.NetworkStats ?? (stats != null ? mapper.ToBlockchainStats(stats) : new BlockchainStats());
 
         // pool wallet link
         var addressInfobaseUrl = poolConfig.Template?.ExplorerAccountLink;

@@ -1,5 +1,5 @@
 using Autofac;
-using AutoMapper;
+using Miningcore.Mapping;
 using Miningcore.Blockchain.Bitcoin;
 using Miningcore.Blockchain.Bitcoin.Configuration;
 using Miningcore.Blockchain.Handshake;
@@ -31,14 +31,15 @@ public class HandshakePayoutHandler : PayoutHandlerBase,
     public HandshakePayoutHandler(
         IComponentContext ctx,
         IConnectionFactory cf,
-        IMapper mapper,
+        MiningcoreMapper mapper,
         IShareRepository shareRepo,
         IBlockRepository blockRepo,
         IBalanceRepository balanceRepo,
         IPaymentRepository paymentRepo,
+        IPayoutBatchRepository payoutBatchRepo,
         IMasterClock clock,
         IMessageBus messageBus) :
-        base(cf, mapper, shareRepo, blockRepo, balanceRepo, paymentRepo, clock, messageBus)
+        base(cf, mapper, shareRepo, blockRepo, balanceRepo, paymentRepo, payoutBatchRepo, clock, messageBus)
     {
         Contract.RequiresNonNull(ctx);
         Contract.RequiresNonNull(balanceRepo);
@@ -256,6 +257,9 @@ public class HandshakePayoutHandler : PayoutHandlerBase,
 
             var didUnlockWallet = false;
 
+            // record the intent before anything leaves the wallet (idempotent payouts, see PayoutHandlerBase)
+            var batch = await BeginPayoutBatchAsync(balances);
+
             // send command
             tryTransfer:
             var walletInfo = await rpcWallet.ExecuteAsync<WalletInfo>(logger, HandshakeWalletCommands.GetWalletInfo, ct);
@@ -263,7 +267,7 @@ public class HandshakePayoutHandler : PayoutHandlerBase,
             logger.Debug(() => $"[{LogCategory}] Current wallet: {walletInfo.Response?.WalletId} [{walletName}]");
             if(walletInfo.Response?.WalletId != walletName)
                 await rpcWallet.ExecuteAsync<JToken>(logger, HandshakeWalletCommands.SelectWallet, ct, new[] { walletName });
-            var result = await rpcWallet.ExecuteAsync<string>(logger, HandshakeWalletCommands.SendMany, ct, args);
+            var result = await rpcWallet.ExecuteAsync<string>(logger, HandshakeWalletCommands.SendMany, ct, args, timeout: SendTimeout);
 
             if(result.Error == null)
             {
@@ -282,12 +286,10 @@ public class HandshakePayoutHandler : PayoutHandlerBase,
                 else
                     logger.Info(() => $"[{LogCategory}] Payment transaction id: {txId}");
 
-                await PersistPaymentsAsync(balances, txId);
+                // marks the batch sent, then persists payments and balances; recoverable at every step
+                await CompletePayoutBatchAsync(batch, !string.IsNullOrEmpty(txId) ? txId : UnknownTransactionId);
 
-                NotifyPayoutSuccess(poolConfig.Id, balances, new[]
-                {
-                    txId
-                }, null);
+                NotifyPayoutSuccess(poolConfig.Id, balances, TxIdsForNotification(txId), null);
             }
 
             else
@@ -311,16 +313,32 @@ public class HandshakePayoutHandler : PayoutHandlerBase,
                         }
 
                         else
-                            logger.Error(() => $"[{LogCategory}] {HandshakeWalletCommands.WalletPassPhrase} returned error: {result.Error.Message} code {result.Error.Code}");
+                        {
+                            logger.Error(() => $"[{LogCategory}] {HandshakeWalletCommands.WalletPassPhrase} returned error: {unlockResult.Error.Message} code {unlockResult.Error.Code}");
+                            await MarkPayoutBatchFailedAsync(batch, $"{HandshakeWalletCommands.WalletPassPhrase} returned error: {unlockResult.Error.Message} code {unlockResult.Error.Code}");
+                        }
                     }
 
                     else
+                    {
                         logger.Error(() => $"[{LogCategory}] Wallet is locked but walletPassword was not configured. Unable to send funds.");
+                        await MarkPayoutBatchFailedAsync(batch, "wallet is locked and no walletPassword is configured");
+                    }
+                }
+
+                else if(IsOutcomeUnknown(result.Error))
+                {
+                    // no daemon response: the transaction may have been broadcast. The batch stays pending
+                    // and payouts for this pool halt until an operator checks the wallet and resolves it.
+                    logger.Error(() => $"[{LogCategory}] {HandshakeWalletCommands.SendMany} failed without a daemon response ({result.Error.Message}); payout batch {batch.Id} stays pending and payouts are halted until it is resolved via api/admin/pools/{poolConfig.Id}/payoutbatches/{batch.Id}/resolve");
+
+                    NotifyPayoutFailure(poolConfig.Id, balances, $"{HandshakeWalletCommands.SendMany} outcome unknown ({result.Error.Message}); payout batch {batch.Id} needs operator resolution", null);
                 }
 
                 else
                 {
                     logger.Error(() => $"[{LogCategory}] {HandshakeWalletCommands.SendMany} returned error: {result.Error.Message} code {result.Error.Code}");
+                    await MarkPayoutBatchFailedAsync(batch, $"{HandshakeWalletCommands.SendMany} returned error: {result.Error.Message} code {result.Error.Code}");
 
                     NotifyPayoutFailure(poolConfig.Id, balances, $"{HandshakeWalletCommands.SendMany} returned error: {result.Error.Message} code {result.Error.Code}", null);
                 }
@@ -330,7 +348,9 @@ public class HandshakePayoutHandler : PayoutHandlerBase,
         else
         {
             var txFailures = new List<Tuple<KeyValuePair<string, decimal>, Exception>>();
+            var resultsLock = new object();   // successBalances and txFailures are written from Parallel.ForEachAsync lambdas
             var successBalances = new Dictionary<Balance, string>();
+            var halted = 0;   // set after a send with an unknown outcome: no further sends are started this run
 
             var parallelOptions = new ParallelOptions
             {
@@ -347,41 +367,61 @@ public class HandshakePayoutHandler : PayoutHandlerBase,
                     // use a common id for all log entries related to this transfer
                     var transferId = CorrelationIdGenerator.GetNextId();
 
+                    if(Volatile.Read(ref halted) != 0)
+                        throw new Exception($"skipped {address}: payouts halted after a send with an unknown outcome");
+
+                    var balance = new Balance { PoolId = poolConfig.Id, Address = address, Amount = amount };
+                    var batch = await BeginPayoutBatchAsync(new[] { balance });
+
                     logger.Info(()=> $"[{LogCategory}] [{transferId}] Sending {FormatAmount(amount)} to {address}");
 
                     var result = await rpcWallet.ExecuteAsync<string>(logger, HandshakeWalletCommands.SendToAddress, ct, new object[]
                     {
                         address,
                         amount,
-                    });
+                    }, timeout: SendTimeout);
 
                     // check result
                     var txId = result.Response;
 
                     if(result.Error != null)
-                        throw new Exception($"[{transferId}] {HandshakeWalletCommands.SendToAddress} returned error: {result.Error.Message} code {result.Error.Code}");
+                    {
+                        var error = $"[{transferId}] {HandshakeWalletCommands.SendToAddress} returned error: {result.Error.Message} code {result.Error.Code}";
+
+                        if(IsOutcomeUnknown(result.Error))
+                        {
+                            Interlocked.Exchange(ref halted, 1);
+                            logger.Error(() => $"[{LogCategory}] {error}; the transaction may have been broadcast. Payout batch {batch.Id} stays pending and payouts are halted until it is resolved");
+                        }
+                        else
+                            await MarkPayoutBatchFailedAsync(batch, error);
+
+                        throw new Exception(error);
+                    }
 
                     if(string.IsNullOrEmpty(txId))
-                        throw new Exception($"[{transferId}] {HandshakeWalletCommands.SendToAddress} did not return a transaction id!");
-                    else
-                        logger.Info(() => $"[{LogCategory}] [{transferId}] Payment transaction id: {txId}");
-
-                    successBalances.Add(new Balance
                     {
-                        PoolId = poolConfig.Id,
-                        Address = address,
-                        Amount = amount,
-                    }, txId);
+                        logger.Error(() => $"[{LogCategory}] [{transferId}] no transaction id returned; payout batch {batch.Id} stays pending until it is resolved");
+                        throw new Exception($"[{transferId}] {HandshakeWalletCommands.SendToAddress} did not return a transaction id!");
+                    }
+
+                    logger.Info(() => $"[{LogCategory}] [{transferId}] Payment transaction id: {txId}");
+
+                    // never throws; if persistence fails the coins are still sent, so the address counts as paid
+                    // here and the batch is finished by the recovery before the next payout
+                    await CompletePayoutBatchAsync(batch, txId);
+
+                    lock(resultsLock)
+                        successBalances.Add(balance, txId);   // for the success notification; persistence already happened per batch
                 }, ex =>
                 {
-                    txFailures.Add(Tuple.Create(x, ex));
+                    lock(resultsLock)
+                        txFailures.Add(Tuple.Create(x, ex));
                 });
             });
 
             if(successBalances.Any())
             {
-                await PersistPaymentsAsync(successBalances);
-
                 NotifyPayoutSuccess(poolConfig.Id, successBalances.Keys.ToArray(), successBalances.Values.ToArray(), null);
             }
 

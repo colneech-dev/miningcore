@@ -22,12 +22,16 @@ public static class ErgoClientFactory
         var baseUrl = new UriBuilder(epConfig.Ssl || epConfig.Http2 ? Uri.UriSchemeHttps : Uri.UriSchemeHttp,
             epConfig.Host, epConfig.Port, epConfig.HttpPath);
 
-        var result = new ErgoClient(baseUrl.ToString(), new HttpClient(new HttpClientHandler
+        // certificates are validated unless the daemon opts out with allowInsecureTls
+        var handler = new HttpClientHandler
         {
             AutomaticDecompression = DecompressionMethods.All,
+        };
 
-            ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true,
-        }));
+        if(epConfig.AllowInsecureTls)
+            handler.ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
+
+        var result = new ErgoClient(baseUrl.ToString(), new HttpClient(handler));
 
         if(!string.IsNullOrEmpty(extra?.ApiKey))
             result.RequestHeaders["api_key"] = extra.ApiKey;

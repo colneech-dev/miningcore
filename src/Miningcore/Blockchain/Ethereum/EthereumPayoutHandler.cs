@@ -1,7 +1,7 @@
 using System.Data;
 using System.Numerics;
 using Autofac;
-using AutoMapper;
+using Miningcore.Mapping;
 using Miningcore.Blockchain.Ethereum.Configuration;
 using Miningcore.Blockchain.Ethereum.DaemonRequests;
 using Miningcore.Blockchain.Ethereum.DaemonResponses;
@@ -30,14 +30,15 @@ public class EthereumPayoutHandler : PayoutHandlerBase,
     public EthereumPayoutHandler(
         IComponentContext ctx,
         IConnectionFactory cf,
-        IMapper mapper,
+        MiningcoreMapper mapper,
         IShareRepository shareRepo,
         IBlockRepository blockRepo,
         IBalanceRepository balanceRepo,
         IPaymentRepository paymentRepo,
+        IPayoutBatchRepository payoutBatchRepo,
         IMasterClock clock,
         IMessageBus messageBus) :
-        base(cf, mapper, shareRepo, blockRepo, balanceRepo, paymentRepo, clock, messageBus)
+        base(cf, mapper, shareRepo, blockRepo, balanceRepo, paymentRepo, payoutBatchRepo, clock, messageBus)
     {
         Contract.RequiresNonNull(ctx);
         Contract.RequiresNonNull(balanceRepo);

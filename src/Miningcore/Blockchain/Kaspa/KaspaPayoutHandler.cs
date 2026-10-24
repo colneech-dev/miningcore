@@ -2,7 +2,7 @@ using System;
 using System.Net.Http;
 using System.Text.RegularExpressions;
 using Autofac;
-using AutoMapper;
+using Miningcore.Mapping;
 using Grpc.Core;
 using Grpc.Net.Client;
 using Miningcore.Blockchain.Kaspa.Configuration;
@@ -31,14 +31,15 @@ public class KaspaPayoutHandler : PayoutHandlerBase,
     public KaspaPayoutHandler(
         IComponentContext ctx,
         IConnectionFactory cf,
-        IMapper mapper,
+        MiningcoreMapper mapper,
         IShareRepository shareRepo,
         IBlockRepository blockRepo,
         IBalanceRepository balanceRepo,
         IPaymentRepository paymentRepo,
+        IPayoutBatchRepository payoutBatchRepo,
         IMasterClock clock,
         IMessageBus messageBus) :
-        base(cf, mapper, shareRepo, blockRepo, balanceRepo, paymentRepo, clock, messageBus)
+        base(cf, mapper, shareRepo, blockRepo, balanceRepo, paymentRepo, payoutBatchRepo, clock, messageBus)
     {
         Contract.RequiresNonNull(ctx);
         Contract.RequiresNonNull(balanceRepo);

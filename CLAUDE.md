@@ -7,12 +7,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Build (Windows):**
 ```bash
 build-windows.bat
-# Runs: dotnet publish -c Release --framework net8.0 -o ../../build
+# Runs: dotnet publish -c Release --framework net10.0 -o ../../build
 ```
 
 **Build (Linux):**
 ```bash
-./build-debian.sh   # or build-ubuntu.sh / build-ubuntu2204.sh
+./build-ubuntu-24.04.sh   # or build-ubuntu-22.04.sh / build-debian-12.sh
 ```
 
 **Docker:**
@@ -65,7 +65,7 @@ docker run -d \
 
 ## Architecture Overview
 
-Miningcore is a multi-coin mining pool server targeting .NET 8. The solution lives under `src/` with two projects: `Miningcore` (main) and `Miningcore.Tests`.
+Miningcore is a multi-coin mining pool server targeting .NET 10 (LTS). The solution lives under `src/` with two projects: `Miningcore` (main) and `Miningcore.Tests`.
 
 ### Share Processing Pipeline
 
@@ -94,6 +94,7 @@ Supported families: Alephium, Beam, Bitcoin, Conceal, Cryptonote, Equihash, Ergo
 | Async event bus | `System.Reactive` (Rx) — `MessageBus` for pool status, block found, share events |
 | Config validation | `FluentValidation` — validators in each `Blockchain/<Family>/` folder |
 | ORM / DB | Dapper with repository pattern under `Persistence/Postgres/Repositories/` |
+| Object mapping | Mapperly, compile-time generated, in `Mapping/MiningcoreMapper.cs` (typed `ToEntity` / `ToModel` / `ToResponse` methods). Replaced AutoMapper in Oct 2026: see `docs/decisions.md` |
 | Logging | NLog — per-pool scoped loggers, configurable to per-pool log files |
 | Metrics | Prometheus on `/metrics` endpoint |
 | Native hashing | `libmultihash` and `libcryptonight` compiled as native libraries, P/Invoked from `Crypto/` |
@@ -111,13 +112,22 @@ REST API served by ASP.NET Core on port 4000 (default):
 
 PostgreSQL 10+ required. Schema: `src/Miningcore/Persistence/Postgres/Scripts/createdb.sql`.
 
-This fork adds two columns requiring migrations:
-- `connectedWorkers` on the pool stats table
-- `worker` on the blocks table
+This fork adds columns and a table that need migrations on an existing database. Every migration lives next to `createdb.sql` and is safe to re-run:
+- `add_worker_connectedworkers.sql` — `poolstats.connectedworkers`, `blocks.worker`
+- `add_minereffort.sql` — `blocks.minereffort`
+- `add_auxblocks.sql` — the `auxblocks` table for merged mining
+- `add_block_difficulty.sql` — `blocks.difficulty`, `auxblocks.difficulty`, `auxblocks.networkdifficulty`
+- `add_payoutbatches.sql` — the `payoutbatches` table (payout intents; required, payouts fail without it)
+
+`SchemaDriftTests` fails the build if a repository INSERT names a column `createdb.sql` does not create. When adding a column, change the entity, the repository, `createdb.sql` and a migration script together.
 
 ### VarDiff
 
 `VarDiff/VarDiffManager.cs` implements adaptive difficulty using a circular buffer of the last 10 share timestamps per connection.
+
+### Decision log
+
+Non-obvious choices (framework version, dependency swaps, CI gate, merged-mining fixes) are recorded with their reasons in `docs/decisions.md`. Add an entry when making a change a future reader would ask "why" about.
 
 ### Configuration
 

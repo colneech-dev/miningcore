@@ -9,7 +9,7 @@ using AspNetCoreRateLimit;
 using Autofac;
 using Autofac.Extensions.DependencyInjection;
 using Autofac.Features.Metadata;
-using AutoMapper;
+using Miningcore.Mapping;
 using Dapper;
 using FluentValidation;
 using McMaster.Extensions.CommandLineUtils;
@@ -252,7 +252,21 @@ public class Program : BackgroundService
                         #endif
 
                         app.UseResponseCompression();
-                        app.UseCors(corsPolicyBuilder => corsPolicyBuilder.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+                        // Any origin may call the public API cross-origin unless api.corsOrigins lists the
+                        // allowed ones. Methods stay unrestricted: the public API has a POST endpoint
+                        // (miner settings) that third-party UIs call from the browser, and restricting methods
+                        // would break them. The admin endpoints are on their own port behind an IP whitelist.
+                        app.UseCors(corsPolicyBuilder =>
+                        {
+                            var origins = clusterConfig.Api?.CorsOrigins;
+
+                            if(origins is { Length: > 0 })
+                                corsPolicyBuilder.WithOrigins(origins);
+                            else
+                                corsPolicyBuilder.AllowAnyOrigin();
+
+                            corsPolicyBuilder.AllowAnyMethod().AllowAnyHeader();
+                        });
                         app.UseWebSockets();
                         app.MapWebSocketManager("/notifications", app.ApplicationServices.GetService<WebSocketNotificationsRelay>());
                         app.UseMetricServer();
@@ -373,9 +387,8 @@ public class Program : BackgroundService
         builder.RegisterInstance(pools);
         builder.RegisterInstance(gcStats);
 
-        // AutoMapper
-        var amConf = new MapperConfiguration(cfg => { cfg.AddProfile(new AutoMapperProfile()); });
-        builder.Register((ctx, parms) => amConf.CreateMapper());
+        // object mapping (Mapperly, compile-time generated)
+        builder.RegisterType<MiningcoreMapper>().AsSelf().SingleInstance();
 
         ConfigurePersistence(builder);
     }

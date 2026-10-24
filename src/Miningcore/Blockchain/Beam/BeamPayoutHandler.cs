@@ -1,6 +1,6 @@
 using System.Data;
 using Autofac;
-using AutoMapper;
+using Miningcore.Mapping;
 using Miningcore.Blockchain.Beam.Configuration;
 using Miningcore.Blockchain.Beam.DaemonRequests;
 using Miningcore.Blockchain.Beam.DaemonResponses;
@@ -30,15 +30,16 @@ public class BeamPayoutHandler : PayoutHandlerBase,
     public BeamPayoutHandler(
         IComponentContext ctx,
         IConnectionFactory cf,
-        IMapper mapper,
+        MiningcoreMapper mapper,
         IShareRepository shareRepo,
         IBlockRepository blockRepo,
         IBalanceRepository balanceRepo,
         IPaymentRepository paymentRepo,
+        IPayoutBatchRepository payoutBatchRepo,
         IMasterClock clock,
         IHttpClientFactory httpClientFactory,
         IMessageBus messageBus) :
-        base(cf, mapper, shareRepo, blockRepo, balanceRepo, paymentRepo, clock, messageBus)
+        base(cf, mapper, shareRepo, blockRepo, balanceRepo, paymentRepo, payoutBatchRepo, clock, messageBus)
     {
         Contract.RequiresNonNull(ctx);
         Contract.RequiresNonNull(balanceRepo);

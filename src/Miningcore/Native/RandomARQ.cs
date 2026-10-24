@@ -68,7 +68,7 @@ public static unsafe class RandomARQ
 
     public class GenContext
     {
-        public DateTime LastAccess { get; set; } = DateTime.Now;
+        public DateTime LastAccess { get; set; } = DateTime.UtcNow;
         public int VmCount { get; init; }
     }
 
@@ -206,7 +206,7 @@ public static unsafe class RandomARQ
 
         void createVm(int index)
         {
-            var start = DateTime.Now;
+            var start = DateTime.UtcNow;
             logger.Info(() => $"Creating VM {realm}@{index + 1} [{flags}], hash {seedHex} ...");
 
             var vm = new RxVm();
@@ -214,7 +214,7 @@ public static unsafe class RandomARQ
 
             vms.Add(vm);
 
-            logger.Info(() => $"Created VM {realm}@{index + 1} in {DateTime.Now - start}");
+            logger.Info(() => $"Created VM {realm}@{index + 1} in {DateTime.UtcNow - start}");
         };
 
         Parallel.For(0, vmCount, createVm);
@@ -284,7 +284,7 @@ public static unsafe class RandomARQ
 
                 vm.CalculateHash(data, result);
 
-                ctx.LastAccess = DateTime.Now;
+                ctx.LastAccess = DateTime.UtcNow;
                 success = true;
 
                 messageBus?.SendTelemetry("RandomARQ", TelemetryCategory.Hash, sw.Elapsed, true);

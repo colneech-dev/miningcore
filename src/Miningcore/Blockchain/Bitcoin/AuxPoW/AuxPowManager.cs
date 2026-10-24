@@ -27,9 +27,14 @@ public class AuxPowManager : IDisposable
     private readonly SemaphoreSlim fetchLock = new(1, 1);
     private volatile bool auxBlockInvalidated = true;
     private long lastFetchTicks;
+    private long lastFailureTicks;   // a failed poll is not retried before fetchInterval has passed (the invalidated flag stays set on failure, so without this a down daemon was polled every second, plus once per share)
     private readonly Dictionary<string, GbtChildBlock> children = new();
     private readonly Queue<string> childOrder = new();
     private readonly TimeSpan fetchInterval;
+
+    // Key of the last target warning emitted, so a daemon that keeps reporting the same
+    // unusable target is warned about once per distinct value instead of on every poll.
+    private string lastTargetWarningKey;
 
     public AuxPowManager(AuxChainConfig config, JsonSerializerSettings serializerSettings, IMessageBus messageBus)
     {
@@ -50,6 +55,81 @@ public class AuxPowManager : IDisposable
 
     public AuxChainConfig Config => config;
     public AuxBlockData CurrentAuxBlock => currentAuxBlock;
+
+    // Network hashrate of the aux chain as reported by its own daemon (getnetworkhashps), cached so the API never
+    // waits on an RPC and a daemon without the method costs one failed call every few minutes, not one per poll.
+    private static readonly TimeSpan networkHashrateInterval = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan networkHashrateRetryInterval = TimeSpan.FromMinutes(5);
+    private long networkHashrateTicks;       // ticks of the last attempt (success or failure)
+    private int networkHashrateBusy;
+    private volatile bool networkHashrateFailed;
+    private double? networkHashrate;
+    private DateTimeOffset? networkHashrateAt;
+
+    /// <summary>Hashes per second the aux chain's daemon reports for the whole network, or null when unknown.</summary>
+    public double? NetworkHashrate => networkHashrate;
+
+    /// <summary>When <see cref="NetworkHashrate"/> was last read from the daemon.</summary>
+    public DateTimeOffset? NetworkHashrateAt => networkHashrateAt;
+
+    /// <summary>
+    /// Reads the network hashrate from the aux daemon at most once a minute (every five minutes after a failure).
+    /// Never throws; the result is exposed through <see cref="NetworkHashrate"/>.
+    /// </summary>
+    public async Task RefreshNetworkHashrateAsync(CancellationToken ct)
+    {
+        var wait = networkHashrateFailed ? networkHashrateRetryInterval : networkHashrateInterval;
+        if(TimeSpan.FromTicks(DateTimeOffset.UtcNow.Ticks - Interlocked.Read(ref networkHashrateTicks)) < wait)
+            return;
+
+        if(Interlocked.CompareExchange(ref networkHashrateBusy, 1, 0) != 0)
+            return;
+
+        try
+        {
+            Interlocked.Exchange(ref networkHashrateTicks, DateTimeOffset.UtcNow.Ticks);
+
+            var response = await rpc.ExecuteAsync<JToken>(logger, "getnetworkhashps", ct, null, timeout: TimeSpan.FromSeconds(10));
+            var value = response.Error == null ? ParseHashrate(response.Response) : null;
+
+            networkHashrateFailed = value == null;
+            if(value != null)
+            {
+                networkHashrate = value;
+                networkHashrateAt = DateTimeOffset.UtcNow;
+            }
+        }
+        catch(Exception ex)
+        {
+            networkHashrateFailed = true;
+            logger.Debug(() => $"[{config.Id}] getnetworkhashps failed: {ex.Message}");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref networkHashrateBusy, 0);
+        }
+    }
+
+    /// <summary>
+    /// Reads a hashrate from an RPC result: a JSON number, or a numeric string. Anything that is not a finite,
+    /// positive number (zero means the daemon has no estimate yet) is null.
+    /// </summary>
+    internal static double? ParseHashrate(JToken token)
+    {
+        if(token == null)
+            return null;
+
+        double value;
+
+        if(token.Type is JTokenType.Float or JTokenType.Integer)
+            value = token.Value<double>();
+        else if(token.Type == JTokenType.String && double.TryParse(token.Value<string>(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+            value = parsed;
+        else
+            return null;
+
+        return double.IsFinite(value) && value > 0 ? value : null;
+    }
 
     /// <summary>
     /// Subscribes to the aux chain daemon's ZMQ hashblock topic if configured.
@@ -92,23 +172,32 @@ public class AuxPowManager : IDisposable
     /// </summary>
     public async Task RefreshAsync(CancellationToken ct)
     {
+        // independent of the work fetch below and self-throttled; the API reads the cached value
+        _ = RefreshNetworkHashrateAsync(ct);
+
         var elapsed = TimeSpan.FromTicks(DateTimeOffset.UtcNow.Ticks - Interlocked.Read(ref lastFetchTicks));
         if(!auxBlockInvalidated && elapsed < fetchInterval)
+            return;
+
+        var sinceFailure = TimeSpan.FromTicks(DateTimeOffset.UtcNow.Ticks - Interlocked.Read(ref lastFailureTicks));
+        if(sinceFailure < fetchInterval)
             return;
 
         if(!await fetchLock.WaitAsync(0))
             return;
 
+        // Failure is recorded at the failure sites (an RPC error, an exception) and not inferred from the absence of a
+        // success marker: a refresh path that returns early on success (e.g. the child-template path merged from main)
+        // would otherwise be counted as a failure and delay the next, ZMQ-triggered refresh.
+        var failed = false;
+
         try
         {
             var method = config.GetAuxBlockMethod;
-            object args = method == "createauxblock" && !string.IsNullOrEmpty(config.Address)
-                ? new object[] { config.Address }
-                : method == "getblocktemplate"
-                    ? new object[] { new { rules = new[] { "segwit" } } }
-                    : null;
+            var args = BuildWorkRequestArgs(config);
 
-            var response = await rpc.ExecuteAsync<JToken>(logger, method, ct, args);
+            // a slow aux daemon must not hold the refresh loop for the full default timeout
+            var response = await rpc.ExecuteAsync<JToken>(logger, method, ct, args, timeout: TimeSpan.FromSeconds(10));
 
             if(response.Error != null)
             {
@@ -116,6 +205,8 @@ public class AuxPowManager : IDisposable
                     logger.Debug(() => $"[{config.Id}] {method} failed: {response.Error.Message}");
                 else
                     logger.Warn(() => $"[{config.Id}] {method} failed: {response.Error.Message}");
+
+                failed = true;
                 return;
             }
 
@@ -166,6 +257,7 @@ public class AuxPowManager : IDisposable
             {
                 Hash = response.Response["hash"]?.Value<string>(),
                 ChainId = ParseInt(response.Response["chainid"]) ?? config.ChainId,
+                SlotByNonce = config.SlotByNonce,
                 PreviousBlockHash = response.Response["previousblockhash"]?.Value<string>(),
                 CoinbaseValue = response.Response["coinbasevalue"]?.Value<long>() ?? 0,
                 Bits = response.Response["bits"]?.Value<string>(),
@@ -175,7 +267,8 @@ public class AuxPowManager : IDisposable
                 FetchedAt = DateTimeOffset.UtcNow,
             };
 
-            block.TargetValue = ResolveTarget(block.Target, block.Bits);
+            block.TargetValue = ResolveTarget(block.Target, block.Bits, out var targetResolution);
+            LogTargetResolution(block, targetResolution);
 
             currentAuxBlock = block;
             Interlocked.Exchange(ref lastFetchTicks, DateTimeOffset.UtcNow.Ticks);
@@ -185,6 +278,8 @@ public class AuxPowManager : IDisposable
         }
         catch(Exception ex)
         {
+            failed = true;
+
             if(config.SilentErrors)
                 logger.Debug(() => $"[{config.Id}] {config.GetAuxBlockMethod} exception: {ex.Message}");
             else
@@ -192,6 +287,9 @@ public class AuxPowManager : IDisposable
         }
         finally
         {
+            if(failed)
+                Interlocked.Exchange(ref lastFailureTicks, DateTimeOffset.UtcNow.Ticks);
+
             fetchLock.Release();
         }
     }
@@ -281,7 +379,56 @@ public class AuxPowManager : IDisposable
     /// interpretation re-compacts to the reported bits wins. If neither does (or bits is absent) the
     /// historical little-endian reading is kept, so existing chains behave exactly as before.
     /// </summary>
+    /// <summary>
+    /// Parameters for the aux work request. createauxblock always takes the payout address. getauxblock takes it only
+    /// when <see cref="AuxChainConfig.PassAddressToGetAuxBlock"/> is set, because on Namecoin-style daemons a lone
+    /// argument to getauxblock is a block hash. getblocktemplate takes the segwit rule. Anything else: no parameters.
+    /// </summary>
+    internal static object BuildWorkRequestArgs(AuxChainConfig config)
+    {
+        var hasAddress = !string.IsNullOrEmpty(config.Address);
+
+        if(config.GetAuxBlockMethod == "createauxblock" && hasAddress)
+            return new object[] { config.Address };
+
+        if(config.GetAuxBlockMethod == "getauxblock" && config.PassAddressToGetAuxBlock && hasAddress)
+            return new object[] { config.Address };
+
+        if(config.GetAuxBlockMethod == "getblocktemplate")
+            return new object[] { new { rules = new[] { "segwit" } } };
+
+        return null;
+    }
+
     public static uint256 ResolveTarget(string targetHex, string bitsHex)
+    {
+        return ResolveTarget(targetHex, bitsHex, out _);
+    }
+
+    /// <summary>
+    /// How <see cref="ResolveTarget(string, string, out TargetResolution)"/> arrived at its result.
+    /// </summary>
+    public enum TargetResolution
+    {
+        /// <summary>Neither target nor usable bits were reported: no target value at all.</summary>
+        None,
+        /// <summary>No target reported; the value was expanded from bits.</summary>
+        FromBits,
+        /// <summary>Target read as little-endian hex, confirmed by bits.</summary>
+        LittleEndian,
+        /// <summary>Target read as big-endian display hex, confirmed by bits.</summary>
+        BigEndian,
+        /// <summary>Target read as little-endian hex; bits were absent or malformed, so this is unverified.</summary>
+        LittleEndianUnchecked,
+        /// <summary>Neither byte order of target matches bits; the little-endian reading was kept.</summary>
+        Mismatch,
+    }
+
+    /// <summary>
+    /// Same as <see cref="ResolveTarget(string, string)"/>, additionally reporting how the
+    /// result was obtained so the caller can log the cases that deserve attention.
+    /// </summary>
+    public static uint256 ResolveTarget(string targetHex, string bitsHex, out TargetResolution resolution)
     {
         uint? bitsCompact = null;
         uint256 fromBits = null;
@@ -301,25 +448,74 @@ public class AuxPowManager : IDisposable
         }
 
         if(string.IsNullOrEmpty(targetHex))
+        {
+            resolution = fromBits != null ? TargetResolution.FromBits : TargetResolution.None;
             return fromBits;
+        }
 
         var bytes = targetHex.HexToByteArray();
         var asLittleEndian = new uint256(bytes);   // historical assumption
 
         if(bitsCompact == null)
+        {
+            resolution = TargetResolution.LittleEndianUnchecked;
             return asLittleEndian;
+        }
 
         if(new NBitcoin.Target(asLittleEndian).ToCompact() == bitsCompact)
+        {
+            resolution = TargetResolution.LittleEndian;
             return asLittleEndian;
+        }
 
         var reversed = (byte[]) bytes.Clone();
         Array.Reverse(reversed);
         var asBigEndian = new uint256(reversed);
 
         if(new NBitcoin.Target(asBigEndian).ToCompact() == bitsCompact)
+        {
+            resolution = TargetResolution.BigEndian;
             return asBigEndian;
+        }
 
+        resolution = TargetResolution.Mismatch;
         return asLittleEndian;
+    }
+
+    /// <summary>
+    /// Surfaces the two cases in which merged mining for this chain would otherwise fail silently:
+    /// no usable target at all (shares are never checked against the chain, see BitcoinJob), and a
+    /// target that matches bits in neither byte order (the chain is probably unreachable by any share).
+    /// Each is warned once per distinct daemon value, not once per poll.
+    /// </summary>
+    private void LogTargetResolution(AuxBlockData block, TargetResolution resolution)
+    {
+        string warningKey = null;
+
+        switch(resolution)
+        {
+            case TargetResolution.None:
+                warningKey = $"none:{block.Target}:{block.Bits}";
+                if(lastTargetWarningKey != warningKey)
+                    logger.Warn(() => $"[{config.Id}] {config.GetAuxBlockMethod} returned no usable target (target='{block.Target}', bits='{block.Bits}'): shares will not be checked against this chain until it does");
+                break;
+
+            case TargetResolution.Mismatch:
+                warningKey = $"mismatch:{block.Target}:{block.Bits}";
+                if(lastTargetWarningKey != warningKey)
+                    logger.Warn(() => $"[{config.Id}] target '{block.Target}' does not re-compact to bits '{block.Bits}' in either byte order; keeping the little-endian reading. If this chain never finds a block, this is the likely cause");
+                break;
+
+            case TargetResolution.BigEndian:
+                logger.Debug(() => $"[{config.Id}] target '{block.Target}' read as big-endian display hex (matches bits {block.Bits})");
+                break;
+
+            case TargetResolution.LittleEndianUnchecked:
+                logger.Debug(() => $"[{config.Id}] target '{block.Target}' read as little-endian hex; bits '{block.Bits}' unavailable to confirm it");
+                break;
+        }
+
+        lastTargetWarningKey = warningKey;
     }
 
     // Some daemons serialize integer fields (chainid, height) as JSON strings.

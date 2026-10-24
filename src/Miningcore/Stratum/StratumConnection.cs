@@ -110,7 +110,7 @@ public class StratumConnection
                     {
                         ServerCertificate = cert,
                         ClientCertificateRequired = false,
-                        EnabledSslProtocols = SslProtocols.Tls11 | SslProtocols.Tls12 | SslProtocols.Tls13,
+                        EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,   // TLS 1.1 is deprecated (RFC 8996)
                         CertificateRevocationCheckMode = X509RevocationMode.NoCheck
                     }, cts.Token);
 
@@ -391,10 +391,19 @@ public class StratumConnection
     {
         expectingProxyHeader = false;
 
-        var line = seq.AsString(Encoding);
         var peerAddress = RemoteEndpoint.Address;
 
-        if(line.StartsWith("PROXY "))
+        // A first line that is not a PROXY header is an ordinary request (a long mining.authorize, say) when the
+        // proxy header is optional, so the length bound only applies to lines that claim to be one. A v1 header
+        // is at most 107 bytes plus CRLF (haproxy PROXY protocol spec, section 2.1).
+        var isProxyLine = seq.Length >= 6 && seq.Slice(0, 6).AsString(Encoding) == "PROXY ";
+
+        if(isProxyLine && seq.Length > 108)
+            throw new InvalidDataException($"Proxy-Protocol header too long ({seq.Length} bytes) from {peerAddress}");
+
+        var line = isProxyLine ? seq.AsString(Encoding) : string.Empty;
+
+        if(isProxyLine)
         {
             var proxyAddresses = proxyProtocol.ProxyAddresses?.Select(IPAddress.Parse).ToArray();
             if(proxyAddresses == null || !proxyAddresses.Any())
@@ -406,6 +415,9 @@ public class StratumConnection
 
                 // split header parts
                 var parts = line.Split(" ");
+                if(parts.Length < 6)
+                    throw new InvalidDataException($"Malformed Proxy-Protocol header from {peerAddress}");
+
                 var remoteAddress = parts[2];
                 var remotePort = parts[4];
 

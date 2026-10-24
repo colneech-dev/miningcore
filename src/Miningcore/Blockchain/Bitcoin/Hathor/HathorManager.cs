@@ -28,6 +28,7 @@ public class HathorManager : IDisposable
     private readonly SemaphoreSlim fetchLock = new(1, 1);
     private volatile bool invalidated = true;
     private long lastFetchTicks;
+    private long lastFailureTicks;   // a failed poll is not retried before fetchInterval has passed (the invalidated flag stays set on failure, so without this a down daemon was polled every second, plus once per share)
     private readonly TimeSpan fetchInterval;
     private long tipHeight;
 
@@ -75,8 +76,14 @@ public class HathorManager : IDisposable
         if(!invalidated && elapsed < fetchInterval)
             return;
 
+        var sinceFailure = TimeSpan.FromTicks(DateTimeOffset.UtcNow.Ticks - Interlocked.Read(ref lastFailureTicks));
+        if(sinceFailure < fetchInterval)
+            return;
+
         if(!await fetchLock.WaitAsync(0))
             return;
+
+        var succeeded = false;
 
         try
         {
@@ -149,6 +156,7 @@ public class HathorManager : IDisposable
 
             Interlocked.Exchange(ref tipHeight, height);
             Interlocked.Exchange(ref lastFetchTicks, DateTimeOffset.UtcNow.Ticks);
+            succeeded = true;
             invalidated = false;
 
             logger.Debug(() => $"[{config.Id}] Hathor work: baseHash={baseHashHex[..16]}... weight={weight:F2} height={height}");
@@ -159,6 +167,9 @@ public class HathorManager : IDisposable
         }
         finally
         {
+            if(!succeeded)
+                Interlocked.Exchange(ref lastFailureTicks, DateTimeOffset.UtcNow.Ticks);
+
             fetchLock.Release();
         }
     }

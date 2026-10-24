@@ -1,6 +1,6 @@
 using System.Net;
 using Autofac;
-using AutoMapper;
+using Miningcore.Mapping;
 using Microsoft.AspNetCore.Mvc;
 using Miningcore.Configuration;
 using Miningcore.Persistence;
@@ -11,14 +11,25 @@ public abstract class ApiControllerBase : ControllerBase
 {
     protected ApiControllerBase(IComponentContext ctx)
     {
-        mapper = ctx.Resolve<IMapper>();
+        mapper = ctx.Resolve<MiningcoreMapper>();
         clusterConfig = ctx.Resolve<ClusterConfig>();
         cf = ctx.Resolve<IConnectionFactory>();
     }
 
     protected readonly ClusterConfig clusterConfig;
     protected readonly IConnectionFactory cf;
-    protected readonly IMapper mapper;
+    protected readonly MiningcoreMapper mapper;
+
+    /// <summary>
+    /// Upper bound for the pageSize query parameter. It used to flow straight into FETCH NEXT, so
+    /// any client could ask for millions of rows and hold a connection and a worker.
+    /// </summary>
+    public const int MaxPageSize = 500;
+
+    protected static int ClampPageSize(int pageSize) => Math.Clamp(pageSize, 1, MaxPageSize);
+
+    /// <summary>Page index bound: a negative page is a negative OFFSET (database error) and page * pageSize is an unchecked int multiply.</summary>
+    protected static int ClampPage(int page) => Math.Clamp(page, 0, 1_000_000);
 
     protected PoolConfig GetPoolNoThrow(string poolId)
     {

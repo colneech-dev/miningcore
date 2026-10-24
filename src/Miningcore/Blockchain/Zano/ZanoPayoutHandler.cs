@@ -1,6 +1,6 @@
 using System.Data;
 using Autofac;
-using AutoMapper;
+using Miningcore.Mapping;
 using Miningcore.Blockchain.Zano.Configuration;
 using Miningcore.Blockchain.Zano.DaemonRequests;
 using Miningcore.Blockchain.Zano.DaemonResponses;
@@ -30,14 +30,15 @@ public class ZanoPayoutHandler : PayoutHandlerBase,
     public ZanoPayoutHandler(
         IComponentContext ctx,
         IConnectionFactory cf,
-        IMapper mapper,
+        MiningcoreMapper mapper,
         IShareRepository shareRepo,
         IBlockRepository blockRepo,
         IBalanceRepository balanceRepo,
         IPaymentRepository paymentRepo,
+        IPayoutBatchRepository payoutBatchRepo,
         IMasterClock clock,
         IMessageBus messageBus) :
-        base(cf, mapper, shareRepo, blockRepo, balanceRepo, paymentRepo, clock, messageBus)
+        base(cf, mapper, shareRepo, blockRepo, balanceRepo, paymentRepo, payoutBatchRepo, clock, messageBus)
     {
         Contract.RequiresNonNull(ctx);
         Contract.RequiresNonNull(balanceRepo);

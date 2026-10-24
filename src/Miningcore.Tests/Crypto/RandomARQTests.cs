@@ -2,6 +2,7 @@ using System;
 using System.Text;
 using Miningcore.Extensions;
 using Miningcore.Native;
+using Miningcore.Tests.Util;
 using Xunit;
 
 namespace Miningcore.Tests.Crypto;
@@ -15,7 +16,7 @@ public class RandomARQTests : TestBase
     private const string hashExpected1 = "27f66e4650eb5657513e76c140e09e59336786f21fbef1ed6ff40fc21538221e";
     private const string hashExpected2 = "6b04e883e07e4e6c072cb064d9aed0fa5a8f7cbbeb7fd3ba653d274ebd4925b0";
 
-    [Fact]
+    [NativeLibFact("librandomarq")]
     public void CreateAndDeleteSeed()
     {
         // creation
@@ -36,7 +37,7 @@ public class RandomARQTests : TestBase
         Assert.False(RandomARQ.realms[realm].ContainsKey(seedHex));
     }
 
-    [Fact]
+    [NativeLibFact("librandomarq")]
     public void CalculateHashSlow()
     {
         var buf = new byte[32];
@@ -62,7 +63,7 @@ public class RandomARQTests : TestBase
         RandomARQ.DeleteSeed(realm, seedHex);
     }
 
-    [Fact]
+    [NativeLibFact("librandomarq")]
     public void CalculateHashFast()
     {
         var buf = new byte[32];

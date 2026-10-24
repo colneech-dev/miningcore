@@ -35,6 +35,9 @@ public class RpcClient
         this.messageBus = messageBus;
         this.poolId = poolId;
 
+        httpClient = CreateHttpClient(endPoint);
+        defaultTimeout = TimeSpan.FromSeconds(endPoint.RequestTimeoutSeconds is > 0 ? endPoint.RequestTimeoutSeconds.Value : 30);
+
         serializer = new JsonSerializer
         {
             ContractResolver = serializerSettings.ContractResolver!
@@ -47,27 +50,43 @@ public class RpcClient
     private readonly IMessageBus messageBus;
     private readonly string poolId;
 
-    private static readonly HttpClient httpClient = new(new HttpClientHandler
-    {
-        AutomaticDecompression = DecompressionMethods.All,
+    private readonly HttpClient httpClient;
+    private readonly TimeSpan defaultTimeout;
 
-        ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true,
-    })
+    /// <summary>
+    /// One client per daemon so that TLS validation can be a per-daemon setting. Certificates are
+    /// validated unless the daemon is configured with allowInsecureTls; previously every daemon
+    /// connection accepted any certificate. The client's own timeout is disabled because each
+    /// request carries its own (see RequestAsync), so callers on hot paths can use short ones.
+    /// </summary>
+    private static HttpClient CreateHttpClient(DaemonEndpointConfig endPoint)
     {
-        Timeout = TimeSpan.FromSeconds(30),
-    };
+        var handler = new HttpClientHandler
+        {
+            AutomaticDecompression = DecompressionMethods.All,
+        };
+
+        if(endPoint.AllowInsecureTls)
+            handler.ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
+
+        return new HttpClient(handler)
+        {
+            Timeout = System.Threading.Timeout.InfiniteTimeSpan,
+        };
+    }
 
     #region API-Surface
 
+    /// <param name="timeout">Per-call timeout; defaults to the daemon's requestTimeoutSeconds (30 s).</param>
     public async Task<RpcResponse<TResponse>> ExecuteAsync<TResponse>(ILogger logger, string method, CancellationToken ct,
-        object payload = null, bool throwOnError = false)
+        object payload = null, bool throwOnError = false, TimeSpan? timeout = null)
         where TResponse : class
     {
         Contract.Requires<ArgumentException>(!string.IsNullOrEmpty(method));
 
         try
         {
-            var response = await RequestAsync(logger, ct, config, method, payload);
+            var response = await RequestAsync(logger, ct, config, method, payload, timeout ?? defaultTimeout);
 
             if(response.Result is JToken token)
                 return new RpcResponse<TResponse>(token.ToObject<TResponse>(serializer), response.Error);
@@ -82,7 +101,12 @@ public class RpcClient
             return new RpcResponse<TResponse>(null, response.Error);
         }
 
-        catch(TaskCanceledException)
+        catch(OperationCanceledException) when(!ct.IsCancellationRequested)
+        {
+            return new RpcResponse<TResponse>(null, new JsonRpcError(-500, $"Timeout after {(timeout ?? defaultTimeout).TotalSeconds:0}s", null));
+        }
+
+        catch(OperationCanceledException)
         {
             return new RpcResponse<TResponse>(null, new JsonRpcError(-500, "Cancelled", null));
         }
@@ -114,6 +138,11 @@ public class RpcClient
                 .ToArray();
         }
 
+        catch(OperationCanceledException) when(!ct.IsCancellationRequested)
+        {
+            return Enumerable.Repeat(new RpcResponse<JToken>(null, new JsonRpcError(-500, $"Timeout after {defaultTimeout.TotalSeconds:0}s", null)), batch.Length).ToArray();
+        }
+
         catch(Exception ex)
         {
             return Enumerable.Repeat(new RpcResponse<JToken>(null, new JsonRpcError(-500, ex.Message, null, ex)), batch.Length).ToArray();
@@ -142,9 +171,13 @@ public class RpcClient
 
     #endregion // API-Surface
 
-    private async Task<JsonRpcResponse> RequestAsync(ILogger logger, CancellationToken ct, DaemonEndpointConfig endPoint, string method, object payload)
+    private async Task<JsonRpcResponse> RequestAsync(ILogger logger, CancellationToken ct, DaemonEndpointConfig endPoint, string method, object payload, TimeSpan timeout)
     {
         var sw = Stopwatch.StartNew();
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(timeout);
+        ct = cts.Token;
 
         // build rpc request
         var rpcRequest = new JsonRpcRequest<object>(method, payload, GetRequestId());
@@ -200,6 +233,10 @@ public class RpcClient
     private async Task<JsonRpcResponse<JToken>[]> BatchRequestAsync(ILogger logger, CancellationToken ct, DaemonEndpointConfig endPoint, RpcRequest[] batch)
     {
         var sw = Stopwatch.StartNew();
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(defaultTimeout);
+        ct = cts.Token;
 
         var rpcRequests = batch.Select(x => new JsonRpcRequest<object>(x.Method, x.Payload, GetRequestId()));
 
@@ -280,7 +317,8 @@ public class RpcClient
                                 // connect
                                 var protocol = endPoint.Ssl ? "wss" : "ws";
                                 var uri = new Uri($"{protocol}://{endPoint.Host}:{endPoint.Port}{endPoint.HttpPath}");
-                                client.Options.RemoteCertificateValidationCallback = (_, _, _, _) => true;
+                                if(endPoint.AllowInsecureTls)
+                                    client.Options.RemoteCertificateValidationCallback = (_, _, _, _) => true;
 
                                 logger.Debug(() => $"Establishing WebSocket connection to {uri}");
                                 await client.ConnectAsync(uri, cts.Token);

@@ -5,7 +5,7 @@ using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using System.Text.RegularExpressions;
 using Autofac;
-using AutoMapper;
+using Miningcore.Mapping;
 using Microsoft.IO;
 using Miningcore.Banning;
 using Miningcore.Blockchain;
@@ -36,7 +36,7 @@ public abstract class PoolBase : StratumServer,
         JsonSerializerSettings serializerSettings,
         IConnectionFactory cf,
         IStatsRepository statsRepo,
-        IMapper mapper,
+        MiningcoreMapper mapper,
         IMasterClock clock,
         IMessageBus messageBus,
         RecyclableMemoryStreamManager rmsm,
@@ -66,7 +66,7 @@ public abstract class PoolBase : StratumServer,
     protected readonly IBlockRepository blocksRepo;
     protected readonly IShareRepository shareRepo;
     protected readonly IStatsRepository statsRepo;
-    protected readonly IMapper mapper;
+    protected readonly MiningcoreMapper mapper;
     protected readonly NicehashService nicehashService;
     protected readonly CompositeDisposable disposables = new();
     protected BlockchainStats blockchainStats;
@@ -236,7 +236,6 @@ public abstract class PoolBase : StratumServer,
             {
                 if(!_ct.IsCancellationRequested && connection.IsAlive && connection.Context.IsAuthorized)
                 {
-                    await SuspiciousMinerEffortCheck(connection, ct);
                     ZombieCheck(connection);
 
                     await func(connection, _ct);
@@ -252,25 +251,72 @@ public abstract class PoolBase : StratumServer,
         });
     }
 
-    protected async Task SuspiciousMinerEffortCheck(StratumConnection connection, CancellationToken ct)
+    private bool SuspiciousEffortCheckEnabled =>
+        poolConfig.Banning?.Enabled == true && poolConfig.Banning?.MinerEffortPercent.HasValue == true && poolConfig.Banning?.MinerEffortTime.HasValue == true;
+
+    /// <summary>
+    /// Periodic sweep for miners whose effort since the last block exceeds banning.minerEffortPercent.
+    /// This used to run inside ForEachMinerAsync, i.e. two database queries per connection on every
+    /// job broadcast and vardiff pass; with a few hundred miners and a short block time that was
+    /// thousands of queries a minute on the shares table. Now it runs once a minute, reads the last
+    /// block time once, and queries each distinct miner once.
+    /// </summary>
+    private async Task RunSuspiciousEffortSweepAsync(CancellationToken ct)
     {
-        if(poolConfig.Banning?.Enabled == true && poolConfig.Banning?.MinerEffortPercent.HasValue == true && poolConfig.Banning?.MinerEffortTime.HasValue == true)
+        if(!SuspiciousEffortCheckEnabled)
+            return;
+
+        await Guard(async () =>
         {
-            var lastBlockTime = await cf.Run(con => blocksRepo.GetLastPoolBlockTimeAsync(con, poolConfig.Id, ct));
-            DateTime dateStart = (lastBlockTime.HasValue) ? lastBlockTime.Value : connection.Context.Created;
-            var minerEffort = await cf.Run(con => shareRepo.GetMinerEffortBetweenCreatedAsync(con, poolConfig.Id, connection.Context.Miner, dateStart, clock.Now, ct));
-            if(minerEffort.HasValue)
+            using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+
+            while(await timer.WaitForNextTickAsync(ct))
             {
-                logger.Debug(() => $"[{connection.Context.Miner}] Checking effort for worker: {minerEffort.Value}%");
-
-                if(minerEffort.Value >= poolConfig.Banning.MinerEffortPercent.Value)
+                // an error ends this tick, not the sweep: a transient database timeout used to end the loop
+                // for good, silently turning banning off until the next restart
+                try
                 {
-                    banManager.Ban(connection.RemoteEndpoint.Address, TimeSpan.FromSeconds(poolConfig.Banning.MinerEffortTime.Value));
+                var lastBlockTime = await cf.Run(con => blocksRepo.GetLastPoolBlockTimeAsync(con, poolConfig.Id, ct));
 
-                    throw new Exception($"Detected suspicious over-sharing-worker: Current effort over {poolConfig.Banning.MinerEffortPercent.Value}%. Banning worker for {poolConfig.Banning.MinerEffortTime.Value} seconds");
+                var byMiner = connections.Values
+                    .Where(c => c.IsAlive && c.Context.IsAuthorized && !string.IsNullOrEmpty(c.Context.Miner))
+                    .GroupBy(c => c.Context.Miner);
+
+                foreach(var group in byMiner)
+                {
+                    if(ct.IsCancellationRequested)
+                        break;
+
+                    var dateStart = lastBlockTime ?? group.Min(c => c.Context.Created);
+                    var minerEffort = await cf.Run(con => shareRepo.GetMinerEffortBetweenCreatedAsync(con, poolConfig.Id, group.Key, dateStart, clock.Now, ct));
+
+                    if(minerEffort.HasValue)
+                    {
+                        logger.Debug(() => $"[{group.Key}] Effort since last block: {minerEffort.Value}%");
+
+                        if(minerEffort.Value >= poolConfig.Banning.MinerEffortPercent.Value)
+                        {
+                            logger.Warn(() => $"[{group.Key}] Suspicious over-sharing: effort {minerEffort.Value:0.##}% is over {poolConfig.Banning.MinerEffortPercent.Value}%. Banning for {poolConfig.Banning.MinerEffortTime.Value} seconds");
+
+                            foreach(var connection in group)
+                            {
+                                banManager.Ban(connection.RemoteEndpoint.Address, TimeSpan.FromSeconds(poolConfig.Banning.MinerEffortTime.Value));
+                                Disconnect(connection);
+                            }
+                        }
+                    }
+                }
+                }
+                catch(Exception ex) when(ex is not OperationCanceledException)
+                {
+                    logger.Error(ex, () => "Suspicious-effort sweep failed; will retry on the next tick");
                 }
             }
-        }
+        }, ex =>
+        {
+            if(ex is not OperationCanceledException)
+                logger.Error(ex);
+        });
     }
 
     protected void ZombieCheck(StratumConnection connection)
@@ -309,8 +355,8 @@ public abstract class PoolBase : StratumServer,
 
             if(stats != null)
             {
-                poolStats = mapper.Map<PoolStats>(stats);
-                blockchainStats = mapper.Map<BlockchainStats>(stats);
+                poolStats = mapper.ToMiningStats(stats);
+                blockchainStats = mapper.ToBlockchainStats(stats);
             }
         }
 
@@ -369,6 +415,8 @@ public abstract class PoolBase : StratumServer,
 
         if(varDiffEnabled)
             tasks.Add(RunVardiffIdleUpdaterAsync(poolConfig.VardiffIdleSweepInterval ?? 30, ct));
+
+        tasks.Add(RunSuspiciousEffortSweepAsync(ct));   // independent of vardiff; returns at once when banning is off
 
         await Task.WhenAll(tasks);
     }
@@ -429,6 +477,7 @@ Pool Fee:               {(poolConfig.RewardRecipients?.Any() == true ? poolConfi
 
     public abstract double HashrateFromShares(double shares, double interval);
     public virtual double ShareMultiplier => 1;
+    public virtual double EffortShareConstant => ShareMultiplier;
 
     public virtual async Task RunAsync(CancellationToken ct)
     {

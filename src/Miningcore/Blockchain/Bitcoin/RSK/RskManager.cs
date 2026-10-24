@@ -32,6 +32,7 @@ public class RskManager : IDisposable
     private readonly SemaphoreSlim fetchLock = new(1, 1);
     private volatile bool invalidated = true;
     private long lastFetchTicks;
+    private long lastFailureTicks;   // a failed poll is not retried before fetchInterval has passed (the invalidated flag stays set on failure, so without this a down daemon was polled every second, plus once per share)
     private readonly TimeSpan fetchInterval;
 
     public RskManager(RskChainConfig config, JsonSerializerSettings serializerSettings, IMessageBus messageBus)
@@ -62,8 +63,14 @@ public class RskManager : IDisposable
         if(!invalidated && elapsed < fetchInterval)
             return;
 
+        var sinceFailure = TimeSpan.FromTicks(DateTimeOffset.UtcNow.Ticks - Interlocked.Read(ref lastFailureTicks));
+        if(sinceFailure < fetchInterval)
+            return;
+
         if(!await fetchLock.WaitAsync(0))
             return;
+
+        var succeeded = false;
 
         try
         {
@@ -114,8 +121,22 @@ public class RskManager : IDisposable
                 logger.Warn(() => $"[{config.Id}] mnr_getWork returned unexpected target (cannot set TargetValue): '{targetHex}'");
             }
 
+            // mnr_getWork carries no height. Best effort: a failure here must not discard the work just fetched.
+            try
+            {
+                var tip = await rpc.ExecuteAsync<string>(logger, "eth_blockNumber", cts.Token, null);
+                var tipHex = StripHexPrefix(tip.Response);
+                if(tip.Error == null && !string.IsNullOrEmpty(tipHex) && long.TryParse(tipHex, System.Globalization.NumberStyles.HexNumber, null, out var tipHeight))
+                    block.Height = (int) Math.Min(tipHeight + 1, int.MaxValue);   // height of the block being mined, as the other chains report
+            }
+            catch(Exception ex)
+            {
+                logger.Debug(() => $"[{config.Id}] eth_blockNumber failed: {ex.Message}");
+            }
+
             currentAuxBlock = block;
             Interlocked.Exchange(ref lastFetchTicks, DateTimeOffset.UtcNow.Ticks);
+            succeeded = true;
             invalidated = false;
 
             logger.Debug(() => $"[{config.Id}] RSK work: hash={hashHex[..16]}...");
@@ -129,6 +150,9 @@ public class RskManager : IDisposable
         }
         finally
         {
+            if(!succeeded)
+                Interlocked.Exchange(ref lastFailureTicks, DateTimeOffset.UtcNow.Ticks);
+
             fetchLock.Release();
         }
     }
@@ -166,6 +190,15 @@ public class RskManager : IDisposable
             accepted = true;
         else if(response.Response.Type == JTokenType.Boolean)
             accepted = response.Response.Value<bool>();
+        else if(response.Response is JObject obj && obj["blockImportedResult"]?.Value<string>() is { } imported)
+        {
+            // RSKj answers with { blockImportedResult, blockHash, blockIncludedHeight }. Only an IMPORTED_*
+            // result is an accepted block. NOTE: this follows RSKj's documented response and has not been
+            // exercised against a live node from here; before it, any object counted as a rejection.
+            accepted = imported.StartsWith("IMPORTED", StringComparison.OrdinalIgnoreCase);
+            if(!accepted)
+                logger.Warn(() => $"[{config.Id}] RSK block rejected: {imported}");
+        }
         else
         {
             var text = response.Response.ToString();

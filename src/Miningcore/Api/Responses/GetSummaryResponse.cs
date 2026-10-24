@@ -10,6 +10,10 @@ public class SummaryMergeMineEntry
 {
     public string Id { get; set; }
     public string Name { get; set; }
+    public long TotalBlocks { get; set; }
+    public long BlocksToday { get; set; }
+    public DateTime? LastBlockTime { get; set; }
+    public decimal? LastReward { get; set; }
 }
 
 public class SummaryPoolEntry

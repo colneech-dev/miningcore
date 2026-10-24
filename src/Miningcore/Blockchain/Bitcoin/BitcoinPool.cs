@@ -3,7 +3,7 @@ using System.Reactive;
 using System.Reactive.Linq;
 using System.Reactive.Threading.Tasks;
 using Autofac;
-using AutoMapper;
+using Miningcore.Mapping;
 using Microsoft.IO;
 using Miningcore.Configuration;
 using Miningcore.Extensions;
@@ -30,7 +30,7 @@ public class BitcoinPool : PoolBase, IAuxMiningPool
         JsonSerializerSettings serializerSettings,
         IConnectionFactory cf,
         IStatsRepository statsRepo,
-        IMapper mapper,
+        MiningcoreMapper mapper,
         IMasterClock clock,
         IMessageBus messageBus,
         RecyclableMemoryStreamManager rmsm,
@@ -44,6 +44,8 @@ public class BitcoinPool : PoolBase, IAuxMiningPool
     private BitcoinTemplate coin;
 
     public IReadOnlyList<AuxPoW.AuxPowManager> AuxManagers => manager?.AuxManagers ?? Array.Empty<AuxPoW.AuxPowManager>();
+    public RSK.RskManager RskManager => manager?.RskManager;
+    public Hathor.HathorManager HathorManager => manager?.HathorManager;
 
     protected virtual async Task OnSubscribeAsync(StratumConnection connection, Timestamped<JsonRpcRequest> tsRequest)
     {
@@ -332,7 +334,7 @@ public class BitcoinPool : PoolBase, IAuxMiningPool
         var result = new Dictionary<string, object>();
 
         var extra = poolConfig.Extra.SafeExtensionDataAs<Configuration.BitcoinPoolConfigExtra>();
-        logger.Info(() => $"[{connection.ConnectionId}] OnConfigure: extra={extra != null}, EnableVersionRolling={extra?.EnableVersionRolling}, Extra keys=[{string.Join(",", poolConfig.Extra?.Keys ?? Enumerable.Empty<string>())}]");
+        logger.Debug(() => $"[{connection.ConnectionId}] OnConfigure: extra={extra != null}, EnableVersionRolling={extra?.EnableVersionRolling}, Extra keys=[{string.Join(",", poolConfig.Extra?.Keys ?? Enumerable.Empty<string>())}]");
 
         if(extensions != null)
         {
@@ -388,7 +390,7 @@ public class BitcoinPool : PoolBase, IAuxMiningPool
         result[BitcoinStratumExtensions.VersionRolling] = true;
         result[BitcoinStratumExtensions.VersionRollingMask] = context.VersionRollingMask.Value.ToStringHex8();
 
-        logger.Info(() => $"[{connection.ConnectionId}] Using version-rolling mask {result[BitcoinStratumExtensions.VersionRollingMask]}");
+        logger.Debug(() => $"[{connection.ConnectionId}] Using version-rolling mask {result[BitcoinStratumExtensions.VersionRollingMask]}");
     }
 
     private void ConfigureMinimumDiff(StratumConnection connection, BitcoinWorkerContext context,
@@ -443,6 +445,11 @@ public class BitcoinPool : PoolBase, IAuxMiningPool
     }
 
     public override double ShareMultiplier => coin.ShareMultiplier;
+
+    // shares.difficulty is stored as stratumDifficulty / shareMultiplier, the unit block and miner effort divide
+    // by networkdifficulty, so pool effort needs no further factor (it used to multiply by the share multiplier,
+    // making scrypt pools read 65536x too high)
+    public override double EffortShareConstant => 1;
 
     #region Overrides
 

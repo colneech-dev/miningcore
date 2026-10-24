@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS auxblocks
     worker                  TEXT            NULL,
     source                  TEXT            NULL,
     submittedvia            TEXT            NULL,
+    difficulty              DOUBLE PRECISION NULL,
+    networkdifficulty       DOUBLE PRECISION NULL,
     created                 TIMESTAMPTZ     NOT NULL
 );
 
