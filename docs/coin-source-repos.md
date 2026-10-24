@@ -111,13 +111,13 @@ address. See the project notes before upgrading it.
 
 ## Installed, syncing, not yet wired
 
-Nodes are running. Sexcoin and NewYorkCoin are already synced and only need wiring; Cyberyen, Argentum, BBQCoin and Meowcoin are still downloading, and Worldcoin has no reachable peer. They are attached to the pools once synced. BoskaCoin, built from source, is already merge-mined.
+Nodes are running. BoskaCoin, Sexcoin, NewYorkCoin and BBQCoin are synced and merge-mined (as of 2026-10-24). Cyberyen, Argentum, Meowcoin, Worldcoin, Bitmark and Lebowskiscoin are still downloading their chains and are attached to the pools once synced.
 
 | Chain | Algorithm | Upstream repository | Deployed version | Method |
 |---|---|---|---|---|
 | Cyberyen (CY) | scrypt | `github.com/cyberyen/cyberyen` | v0.21.7 | Release |
 | Argentum (ARG, SHA-256 lane) | sha256 | `github.com/argentumproject/argentum` | 4.14.5 | Release (no published checksums) |
-| BBQCoin (BQC) | scrypt | `github.com/BBQCoinCommunity/BBQCoinV3` | v3.0.1 | Release (no published checksums) |
+| BBQCoin (BQC) | scrypt | `github.com/BBQCoinCommunity/BBQCoinV3` | v3.0.1 | Release (no published checksums). Synced and merge-mined since 2026-10-24. |
 | Meowcoin (MEWC, Scrypt lane) | scrypt | `github.com/Meowcoin-Foundation/Meowcoin` | v30.2.8 | Release |
 | Worldcoin (WDC) | scrypt | `github.com/OfficialWorldcoinGlobal/Worldcoin` | 0.17.1 | Release (no published checksums) |
 | Sexcoin (SXC) | scrypt | `github.com/sexcoin-project/sexcoin` | commit `39f60929150154994e4a597f3f06eba254291366` (v0.15.2.2) | Source. The node that matters runs synced beside the pool; a second copy built locally is redundant. |

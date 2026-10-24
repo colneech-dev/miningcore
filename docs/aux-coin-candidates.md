@@ -58,7 +58,7 @@ Selection rules used throughout:
 
 What changed since the table above was written.
 
-**Deployed.** Nodes for BoskaCoin, Cyberyen, Argentum (SHA-256 lane), BBQCoin, Meowcoin (Scrypt lane), Worldcoin and Sexcoin
+**Deployed.** Nodes for BoskaCoin, Cyberyen, Argentum (SHA-256 lane), BBQCoin, Meowcoin (Scrypt lane), Worldcoin, Bitmark, Lebowskiscoin and Sexcoin
 now run. BoskaCoin is merge-mined in the Scrypt pools. Sexcoin and NewYorkCoin (original client) already ran fully synced
 beside the pool, are on the live chain tip, and only need wiring into the Scrypt pools. Cyberyen, Argentum, BBQCoin and
 Meowcoin are still downloading their chains.
@@ -679,3 +679,5 @@ abandoned forks.
 | noirofficial/noir | 2022-06-06 | 8255 | Not used - no activity since 2022 |
 | odeonus/GravityCoin-1 | 2020-05-29 | 29100 | Not used - abandoned (2020) |
 | presstab/crown-core | 2018-11-20 | 9340 | Not used - the maintained Crown project is a separate repository |
+
+**Wired into the Scrypt pools as of 2026-10-24:** BoskaCoin, Sexcoin, NewYorkCoin and BBQCoin (each in all six Scrypt pools, with chain IDs 49020, 105, 1985 and 19316, none of which collide with another chain in those pools). Still syncing and not yet wired: Cyberyen, Meowcoin, Worldcoin, Bitmark, Lebowskiscoin and Argentum.
