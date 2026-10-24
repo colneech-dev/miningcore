@@ -4,6 +4,28 @@ Short records of non-obvious choices in this fork: what was decided, why, and wh
 costs. Newest first. Each entry names the commit that made the change; the commit message
 carries the full detail and the verification that was done.
 
+## 2026-10-24 — Aux chains: ElevenSeventyFive slot rule, one stats entry per algorithm (6f76bace, cbd0e99c)
+
+**Decision.** Three changes to merge-mined chain handling:
+
+- `slotByNonce` (per aux chain, default off) places a chain at `nonce % treeSize` instead of the
+  Namecoin LCG slot. It is on for ElevenSeventyFive.
+- `/api/auxchains` returns one entry per chain *and pool algorithm*, plus Rootstock and Hathor,
+  which are merge-mined outside the AuxPoW tree. The aggregation lives in `AuxChainStatsBuilder`.
+- `hashrateBlockTimeSeconds` (per aux chain, default off) estimates hashrate from difficulty
+  instead of asking the daemon. It is on for Myriadcoin (300 s: five algorithms share one
+  block a minute). Rootstock and Hathor are always estimated at their 30 s block time.
+
+**Why.** ElevenSeventyFive's `CAuxPow::Check` requires `chain index == merkle nonce % tree size`
+and ignores the chain id, so every submission using the LCG slot was rejected ("chain index does
+not match nonce mod size"). Myriadcoin runs a SHA-256 and a Scrypt node under one chain id and
+the entries were merged, so the card showed whichever lane polled last; its `getnetworkhashps`
+also ignores the algorithm and returned one figure for both lanes.
+
+**Cost.** Hashrate for the estimated chains is derived, not measured. Chains that need
+`slotByNonce` must be flagged in config; nothing detects it. The ElevenSeventyFive fix was
+verified by unit tests and the daemon's source, not yet by an accepted block.
+
 ## 2026-10-18 — Replace AutoMapper with Mapperly (aa04eaeb)
 
 **Decision.** All object mapping is generated at compile time by Riok.Mapperly (Apache-2.0)
