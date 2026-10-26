@@ -518,3 +518,27 @@ refreshes by a poll interval. The failure throttle now records failures at the f
 After merging, switch main's child-template call from the two-argument `ResolveTarget(target, bits)` to the
 overload with `out TargetResolution` plus `LogTargetResolution`, or that path will never warn about an unusable
 target.
+
+## 2026-10-26 — Corgi: aux rewards go to a separate wallet on an unpatched node
+
+**Problem.** Unpatched `corgicoind` v4.6.0.0 stores wrong transaction offsets for AuxPoW blocks and so cannot read
+back a transaction that lives in one. The first block that spends an AuxPoW-block output is rejected by every stock
+node (`ReadFromDisk … prev tx failed`). Our pool paid aux rewards and payouts from one address and one wallet, so a
+routine payout (block 50,191) split us from the network: 246 blocks that no stock node would accept. Confirmed on
+mainnet with a stock node and with a mixed-binary regtest (patched node0, stock node1; the stock node stalls only
+on the block that spends the merged-mined coinbase). The fix is upstream PR corgicoin/corgicoin#67.
+
+**Decision.** (1) The three pools that merge-mine Corgi pay a dedicated aux address held by a second daemon,
+`corgicoin-aux`, which runs the unpatched image on purpose. It can never spend those coins, and because it follows
+our chain it is a standing check that our blocks stay valid for stock nodes. (2) The primary pool and payouts use
+a new wallet on the patched node that never holds aux coins. (3) Until PR #67 is released, no AuxPoW-block output is
+spent.
+
+**Rollback.** The daemon has no `invalidateblock`, so the chain was rolled back to the last shared block (50,190)
+by syncing a fresh data directory from the stock peers. The old data directory is kept as
+`/data/.corgicoin-old-fork-20261026` and must not be started against the network. Orphaned rows and reverted
+payments were archived in `corgi_rollback_20261026_*` tables.
+
+**Known and accepted.** Aux coins from before the rollback (blocks ~50,098 to 50,190 at the old pool address) stay
+unspendable until the fix is released and nodes are upgraded and reindexed. The payout wallet starts empty, so
+re-credited balances are paid as new primary-pool blocks mature.
