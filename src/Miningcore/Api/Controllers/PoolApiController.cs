@@ -73,27 +73,18 @@ public class PoolApiController : ApiControllerBase
 
                 var from = clock.Now.AddHours(-topMinersRange);
 
-                // none of these depend on each other: fire them all off together instead of
-                // chaining ~9 awaits end-to-end (that chain, times every enabled pool running
-                // concurrently, was what made this endpoint take ~5s to answer). The block and
-                // aux-block counts/times/reward are each now one merged query instead of 5 + 2.
-                var statsTask = cf.Run(con => statsRepo.GetLastPoolStatsAsync(con, config.Id, ct));
-                var totalPaidTask = cf.Run(con => statsRepo.GetTotalPoolPaymentsAsync(con, config.Id, ct));
-                var blockSummaryTask = cf.Run(con => blocksRepo.GetPoolBlockSummaryAsync(con, config.Id, ct));
-                var auxSummaryTask = hasAux ? cf.Run(con => auxBlocksRepo.GetPoolAuxBlockSummaryAsync(con, config.Id, ct)) : null;
-                var minersTask = cf.Run(con => statsRepo.PagePoolMinersByHashrateAsync(con, config.Id, from, 0, 15, ct));
-
-                if(auxSummaryTask != null)
-                    await Task.WhenAll(statsTask, totalPaidTask, blockSummaryTask, auxSummaryTask, minersTask);
-                else
-                    await Task.WhenAll(statsTask, totalPaidTask, blockSummaryTask, minersTask);
+                // One connection, one network round trip per pool (QueryMultipleAsync) instead
+                // of 5 separate cf.Run calls — each of those opened its own connection, and with
+                // 12+ pools running concurrently that was 60 near-simultaneous connection
+                // checkouts for every cache-miss request.
+                var bundle = await cf.Run(con => statsRepo.GetPoolApiBundleAsync(con, config.Id, hasAux, from, 15, ct));
 
                 // map
-                var result = config.ToPoolInfo(mapper, statsTask.Result, pool);
+                var result = config.ToPoolInfo(mapper, bundle.Stats, pool);
 
                 // enrich
-                result.TotalPaid = totalPaidTask.Result;
-                var blockSummary = blockSummaryTask.Result;
+                result.TotalPaid = bundle.TotalPaid;
+                var blockSummary = bundle.BlockSummary;
                 result.TotalBlocks = blockSummary.TotalBlocks;
                 result.TotalConfirmedBlocks = blockSummary.TotalConfirmedBlocks;
                 result.TotalPendingBlocks = blockSummary.TotalPendingBlocks;
@@ -104,10 +95,10 @@ public class PoolApiController : ApiControllerBase
                 var lastBlockTime = blockSummary.LastBlockTime;
                 result.LastPoolBlockTime = lastBlockTime;
 
-                if(auxSummaryTask != null)
+                if(hasAux && bundle.AuxSummary != null)
                 {
-                    result.TotalAuxBlocks = auxSummaryTask.Result.TotalAuxBlocks;
-                    result.LastAuxBlockTime = auxSummaryTask.Result.LastAuxBlockTime;
+                    result.TotalAuxBlocks = bundle.AuxSummary.TotalAuxBlocks;
+                    result.LastAuxBlockTime = bundle.AuxSummary.LastAuxBlockTime;
                 }
 
                 var payoutConfig = config.PaymentProcessing;
@@ -115,7 +106,7 @@ public class PoolApiController : ApiControllerBase
                 if(payoutConfig?.PayoutScheme != PayoutScheme.PPLNSBF && result.PaymentProcessing?.PayoutSchemeConfig != null)
                     result.PaymentProcessing.PayoutSchemeConfig.BlockFinderPercentage = null;
 
-                // depends on lastBlockTime, so it can't join the batch above
+                // depends on lastBlockTime, so it's a separate (small) round trip after the bundle
                 if(lastBlockTime.HasValue && pool != null)
                 {
                     var startTime = lastBlockTime.Value;
@@ -124,7 +115,7 @@ public class PoolApiController : ApiControllerBase
                         result.PoolEffort = poolEffort.Value;
                 }
 
-                result.TopMiners = minersTask.Result.Select(mapper.ToResponse).ToArray();
+                result.TopMiners = bundle.TopMiners.Select(mapper.ToResponse).ToArray();
 
                 return result;
             }).ToArray())
@@ -173,28 +164,18 @@ public class PoolApiController : ApiControllerBase
 
         var from = clock.Now.AddHours(-topMinersRange);
 
-        // none of these depend on each other: fire them all off together instead of
-        // chaining ~9 awaits end-to-end. The block and aux-block counts/times/reward are each
-        // now one merged query instead of 5 + 2.
-        var statsTask = cf.Run(con => statsRepo.GetLastPoolStatsAsync(con, pool.Id, ct));
-        var totalPaidTask = cf.Run(con => statsRepo.GetTotalPoolPaymentsAsync(con, pool.Id, ct));
-        var blockSummaryTask = cf.Run(con => blocksRepo.GetPoolBlockSummaryAsync(con, pool.Id, ct));
-        var auxSummaryTask = hasAux ? cf.Run(con => auxBlocksRepo.GetPoolAuxBlockSummaryAsync(con, pool.Id, ct)) : null;
-        var minersTask = cf.Run(con => statsRepo.PagePoolMinersByHashrateAsync(con, pool.Id, from, 0, 15, ct));
-
-        if(auxSummaryTask != null)
-            await Task.WhenAll(statsTask, totalPaidTask, blockSummaryTask, auxSummaryTask, minersTask);
-        else
-            await Task.WhenAll(statsTask, totalPaidTask, blockSummaryTask, minersTask);
+        // One connection, one network round trip (QueryMultipleAsync) instead of 5 separate
+        // cf.Run calls.
+        var bundle = await cf.Run(con => statsRepo.GetPoolApiBundleAsync(con, pool.Id, hasAux, from, 15, ct));
 
         var response = new GetPoolResponse
         {
-            Pool = pool.ToPoolInfo(mapper, statsTask.Result, poolInstance)
+            Pool = pool.ToPoolInfo(mapper, bundle.Stats, poolInstance)
         };
 
         // enrich
-        response.Pool.TotalPaid = totalPaidTask.Result;
-        var blockSummary = blockSummaryTask.Result;
+        response.Pool.TotalPaid = bundle.TotalPaid;
+        var blockSummary = bundle.BlockSummary;
         response.Pool.TotalBlocks = blockSummary.TotalBlocks;
         response.Pool.TotalConfirmedBlocks = blockSummary.TotalConfirmedBlocks;
         response.Pool.TotalPendingBlocks = blockSummary.TotalPendingBlocks;
@@ -205,10 +186,10 @@ public class PoolApiController : ApiControllerBase
         var lastBlockTime = blockSummary.LastBlockTime;
         response.Pool.LastPoolBlockTime = lastBlockTime;
 
-        if(auxSummaryTask != null)
+        if(hasAux && bundle.AuxSummary != null)
         {
-            response.Pool.TotalAuxBlocks = auxSummaryTask.Result.TotalAuxBlocks;
-            response.Pool.LastAuxBlockTime = auxSummaryTask.Result.LastAuxBlockTime;
+            response.Pool.TotalAuxBlocks = bundle.AuxSummary.TotalAuxBlocks;
+            response.Pool.LastAuxBlockTime = bundle.AuxSummary.LastAuxBlockTime;
         }
 
         var payoutConfig = pool.PaymentProcessing;
@@ -216,7 +197,7 @@ public class PoolApiController : ApiControllerBase
         if(payoutConfig?.PayoutScheme != PayoutScheme.PPLNSBF && response.Pool.PaymentProcessing?.PayoutSchemeConfig != null)
             response.Pool.PaymentProcessing.PayoutSchemeConfig.BlockFinderPercentage = null;
 
-        // depends on lastBlockTime, so it can't join the batch above
+        // depends on lastBlockTime, so it's a separate (small) round trip after the bundle
         if(lastBlockTime.HasValue && poolInstance != null)
         {
             var startTime = lastBlockTime.Value;
@@ -225,7 +206,7 @@ public class PoolApiController : ApiControllerBase
                 response.Pool.PoolEffort = poolEffort.Value;
         }
 
-        response.Pool.TopMiners = minersTask.Result
+        response.Pool.TopMiners = bundle.TopMiners
             .Select(mapper.ToResponse)
             .ToArray();
 

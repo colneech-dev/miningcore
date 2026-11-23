@@ -341,6 +341,72 @@ public class StatsRepository : IStatsRepository
             .ToArray();
     }
 
+    public async Task<PoolApiBundle> GetPoolApiBundleAsync(IDbConnection con, string poolId, bool includeAux,
+        DateTime topMinersFrom, int topMinersPageSize, CancellationToken ct)
+    {
+        // Same five queries /api/pools and /api/pools/{id} always need per pool (last stats,
+        // total paid, block summary, optional aux summary, top miners), batched into one
+        // connection and one network round trip via QueryMultipleAsync instead of five.
+        const string auxQuery = @"SELECT COUNT(*) AS totalauxblocks, MAX(created) AS lastauxblocktime FROM auxblocks WHERE poolid = @poolId;";
+
+        var query = $@"
+            SELECT * FROM poolstats WHERE poolid = @poolId ORDER BY created DESC FETCH NEXT 1 ROWS ONLY;
+
+            SELECT sum(amount) FROM payments WHERE poolid = @poolId;
+
+            WITH agg AS (
+                SELECT
+                    COUNT(*) AS totalblocks,
+                    COUNT(*) FILTER (WHERE status = 'confirmed') AS totalconfirmedblocks,
+                    COUNT(*) FILTER (WHERE status = 'pending') AS totalpendingblocks,
+                    MAX(created) AS lastblocktime
+                FROM blocks WHERE poolid = @poolId
+            )
+            SELECT agg.*, r.reward AS lastconfirmedreward
+            FROM agg
+            LEFT JOIN LATERAL (
+                SELECT reward FROM blocks WHERE poolid = @poolId AND status = 'confirmed' ORDER BY created DESC LIMIT 1
+            ) r ON true;
+
+            {(includeAux ? auxQuery : "")}
+
+            WITH tmp AS
+            (
+            	SELECT
+            		ms.miner,
+            		ms.hashrate,
+            		ms.sharespersecond,
+            		ROW_NUMBER() OVER(PARTITION BY ms.miner ORDER BY ms.hashrate DESC) AS rk
+            	FROM (SELECT miner, SUM(hashrate) AS hashrate, SUM(sharespersecond) AS sharespersecond
+                   FROM minerstats
+                   WHERE poolid = @poolId AND created >= @topMinersFrom GROUP BY miner, created) ms
+            )
+            SELECT t.miner, t.hashrate, t.sharespersecond
+            FROM tmp t
+            WHERE t.rk = 1
+            ORDER by t.hashrate DESC
+            OFFSET 0 FETCH NEXT @topMinersPageSize ROWS ONLY;";
+
+        using(var grid = await con.QueryMultipleAsync(new CommandDefinition(query,
+            new { poolId, topMinersFrom, topMinersPageSize }, cancellationToken: ct)))
+        {
+            var statsEntity = await grid.ReadSingleOrDefaultAsync<Entities.PoolStats>();
+            var totalPaid = await grid.ReadSingleAsync<decimal>();
+            var blockSummary = await grid.ReadSingleAsync<PoolBlockSummary>();
+            var auxSummary = includeAux ? await grid.ReadSingleAsync<PoolAuxBlockSummary>() : null;
+            var topMiners = (await grid.ReadAsync<Entities.MinerWorkerPerformanceStats>()).ToArray();
+
+            return new PoolApiBundle
+            {
+                Stats = statsEntity == null ? null : mapper.ToModel(statsEntity),
+                TotalPaid = totalPaid,
+                BlockSummary = blockSummary,
+                AuxSummary = auxSummary,
+                TopMiners = topMiners.Select(mapper.ToModel).ToArray()
+            };
+        }
+    }
+
     public Task<int> DeletePoolStatsBeforeAsync(IDbConnection con, DateTime date, CancellationToken ct)
     {
         const string query = @"DELETE FROM poolstats WHERE created < @date";

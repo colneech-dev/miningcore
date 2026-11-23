@@ -15,6 +15,7 @@ public interface IStatsRepository
     Task<MinerStats> GetMinerStatsAsync(IDbConnection con, IDbTransaction tx, string poolId, string miner, CancellationToken ct);
     Task<MinerWorkerHashrate[]> GetPoolMinerWorkerHashratesAsync(IDbConnection con, string poolId, CancellationToken ct);
     Task<MinerWorkerPerformanceStats[]> PagePoolMinersByHashrateAsync(IDbConnection con, string poolId, DateTime from, int page, int pageSize, CancellationToken ct);
+    Task<PoolApiBundle> GetPoolApiBundleAsync(IDbConnection con, string poolId, bool includeAux, DateTime topMinersFrom, int topMinersPageSize, CancellationToken ct);
 
     Task<WorkerPerformanceStatsContainer[]> GetMinerPerformanceBetweenMinutelyAsync(IDbConnection con, string poolId, string miner,
         DateTime start, DateTime end, CancellationToken ct);
