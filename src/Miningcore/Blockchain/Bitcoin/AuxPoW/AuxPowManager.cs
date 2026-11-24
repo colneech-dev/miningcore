@@ -3,6 +3,8 @@ using System.Reactive.Linq;
 using Miningcore.Blockchain.Bitcoin.AuxPoW;
 using Miningcore.Configuration;
 using Miningcore.Messaging;
+using Miningcore.Notifications.Messages;
+using Miningcore.Payments;
 using Miningcore.Rpc;
 using NBitcoin;
 using Newtonsoft.Json;
@@ -11,6 +13,17 @@ using Newtonsoft.Json.Linq;
 using NLog;
 
 namespace Miningcore.Blockchain.Bitcoin.AuxPoW;
+
+/// <summary>
+/// A submitblock/getauxblock-family submission failed without a daemon response (transport failure,
+/// timeout). The aux block may still have been accepted server-side - there is no proof either way.
+/// </summary>
+public class AuxSubmitOutcomeUnknownException : Exception
+{
+    public AuxSubmitOutcomeUnknownException(string message) : base(message)
+    {
+    }
+}
 
 /// <summary>
 /// Manages auxiliary chain (e.g. Namecoin) merge mining for a primary Bitcoin-family pool.
@@ -36,9 +49,12 @@ public class AuxPowManager : IDisposable
     // unusable target is warned about once per distinct value instead of on every poll.
     private string lastTargetWarningKey;
 
+    private readonly IMessageBus messageBus;
+
     public AuxPowManager(AuxChainConfig config, JsonSerializerSettings serializerSettings, IMessageBus messageBus)
     {
         this.config = config;
+        this.messageBus = messageBus;
         logger = LogManager.GetLogger(config.Id);
 
         if(config.Daemons == null || config.Daemons.Length == 0)
@@ -321,10 +337,25 @@ public class AuxPowManager : IDisposable
             submitArgs = new object[] { GbtChildBuilder.BuildSubmitHex(child, auxPoWHex) };
         }
 
-        var response = await rpc.ExecuteAsync<JToken>(logger, submitMethod, ct, submitArgs);
+        var response = await rpc.ExecuteAsync<JToken>(logger, submitMethod, ct, submitArgs, timeout: TimeSpan.FromSeconds(30));
 
         if(response.Error != null)
         {
+            // A transport failure or timeout here proves nothing - the daemon may have received and
+            // accepted the submission before the connection dropped. Treating it the same as a definite
+            // rejection (as this used to) let the caller remove its dedup entry and silently record
+            // nothing for a block that may actually have been credited on the aux chain - permanently
+            // losing track of a real reward. Surface it loudly instead of guessing either way.
+            if(PayoutErrorClassifier.IsOutcomeUnknown(response.Error))
+            {
+                var message = $"[{config.Id}] {submitMethod} for aux block {auxHash} failed without a daemon response ({response.Error.Message}); the block may still have been accepted. Check {config.Name}'s chain manually.";
+
+                logger.Error(() => message);
+                messageBus.SendMessage(new AdminNotification($"Aux block submission outcome unknown ({config.Id})", message));
+
+                throw new AuxSubmitOutcomeUnknownException(message);
+            }
+
             logger.Warn(() => $"[{config.Id}] {submitMethod} failed: {response.Error.Message}");
             return false;
         }

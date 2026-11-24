@@ -1001,7 +1001,22 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
                 var auxPoWHex = AuxPowSerializer.BuildAuxPoWHex(coinbaseTxHex, headerBytes, merkleBranch, auxBranch, auxIndex);
 
                 logger.Info(() => $"AuxPoW [{manager.Config.Id}] hash={auxBlock.Hash} treeSize={submittingJob?.AuxMerkleTreeSize} auxIndex={auxIndex} auxBranchLen={auxBranch.Count} coinbaseBranchLen={merkleBranch.Count} auxPoW={auxPoWHex}");
-                var auxAccepted = await manager.SubmitAuxBlockAsync(auxBlock.Hash, auxPoWHex, ct);
+
+                bool auxAccepted;
+
+                try
+                {
+                    auxAccepted = await manager.SubmitAuxBlockAsync(auxBlock.Hash, auxPoWHex, ct);
+                }
+
+                catch(AuxSubmitOutcomeUnknownException)
+                {
+                    // Outcome unknown: the block may already be accepted on the aux chain, so the dedup
+                    // entry is kept (never resubmit it) but no record is inserted here since we can't
+                    // confirm it exists to classify or credit. AuxPowManager already logged and notified
+                    // an admin; move on without crediting or resubmitting this block.
+                    continue;
+                }
 
                 if(!auxAccepted)
                     submittedAuxHashes.TryRemove(dedupKey, out _);
