@@ -666,6 +666,9 @@ public class EthereumPayoutHandler : PayoutHandlerBase,
             }
         }
 
+        // record the intent before anything leaves the wallet (idempotent payouts, see PayoutHandlerBase)
+        var batch = await BeginPayoutBatchAsync(new[] { balance });
+
         RpcResponse<string> response;
         if(extraPoolConfig?.ChainTypeOverride == "Pink")
         {
@@ -676,23 +679,39 @@ public class EthereumPayoutHandler : PayoutHandlerBase,
                 Value = amount.ToString("x").TrimStart('0'),
                 Gas = extraConfig.Gas
             };
-            response = await rpcClient.ExecuteAsync<string>(logger, coin.RpcMethodPrefix + EC.SendTx, ct, new[] { requestPink });
-        }  
+            response = await rpcClient.ExecuteAsync<string>(logger, coin.RpcMethodPrefix + EC.SendTx, ct, new[] { requestPink }, timeout: SendTimeout);
+        }
         else {
-            response = await rpcClient.ExecuteAsync<string>(logger, coin.RpcMethodPrefix + EC.SendTx, ct, new[] { request });
+            response = await rpcClient.ExecuteAsync<string>(logger, coin.RpcMethodPrefix + EC.SendTx, ct, new[] { request }, timeout: SendTimeout);
         }
 
         if(response.Error != null)
-            throw new Exception($"{coin.RpcMethodPrefix}{EC.SendTx} returned error: {response.Error.Message} code {response.Error.Code}");
-        
+        {
+            var error = $"{coin.RpcMethodPrefix}{EC.SendTx} returned error: {response.Error.Message} code {response.Error.Code}";
+
+            // a transport failure or stale-nonce-style error leaves the outcome unknown - the node may still have
+            // broadcast the transaction - so the batch stays pending rather than being marked failed, which would
+            // let the same balance be paid again on the next run from a fresh nonce.
+            if(IsOutcomeUnknown(response.Error))
+                logger.Error(() => $"[{LogCategory}] {error}; the transaction may have been broadcast. Payout batch {batch.Id} stays pending and payouts are halted until it is resolved");
+            else
+                await MarkPayoutBatchFailedAsync(batch, error);
+
+            throw new Exception(error);
+        }
+
         if(string.IsNullOrEmpty(response.Response) || EthereumConstants.ZeroHashPattern.IsMatch(response.Response))
-            throw new Exception($"{coin.RpcMethodPrefix}{EC.SendTx} did not return a valid transaction hash");
-        
+        {
+            var error = $"{coin.RpcMethodPrefix}{EC.SendTx} did not return a valid transaction hash";
+            logger.Error(() => $"[{LogCategory}] {error}; payout batch {batch.Id} stays pending until it is resolved");
+            throw new Exception(error);
+        }
+
         var txHash = response.Response;
         logger.Info(() => $"[{LogCategory}] Payment transaction id: {txHash}");
 
-        // update db
-        await PersistPaymentsAsync(new[] { balance }, txHash);
+        // marks the batch sent, then persists payments and balances; recoverable at every step
+        await CompletePayoutBatchAsync(batch, txHash);
 
         // done
         return txHash;

@@ -62,7 +62,7 @@ public class ConcealPayoutHandler : PayoutHandlerBase,
 
     protected override string LogCategory => "Conceal Payout Handler";
 
-    private async Task<bool> HandleSendTransactionResponseAsync(RpcResponse<SendTransactionResponse> response, params Balance[] balances)
+    private async Task<bool> HandleSendTransactionResponseAsync(Persistence.Model.PayoutBatch trackingBatch, RpcResponse<SendTransactionResponse> response, params Balance[] balances)
     {
         var coin = poolConfig.Template.As<ConcealCoinTemplate>();
 
@@ -73,16 +73,26 @@ public class ConcealPayoutHandler : PayoutHandlerBase,
 
             logger.Info(() => $"[{LogCategory}] Payment transaction id: {txHash}, TxFee {FormatAmount(txFee)}");
 
-            await PersistPaymentsAsync(balances, txHash);
+            // marks the batch sent, then persists payments and balances; recoverable at every step
+            await CompletePayoutBatchAsync(trackingBatch, txHash);
             NotifyPayoutSuccess(poolConfig.Id, balances, new[] { txHash }, txFee);
             return true;
         }
 
         else
         {
-            logger.Error(() => $"[{LogCategory}] Daemon command '{ConcealWalletCommands.SendTransaction}' returned error: {response.Error.Message} code {response.Error.Code}");
+            var error = $"Daemon command '{ConcealWalletCommands.SendTransaction}' returned error: {response.Error.Message} code {response.Error.Code}";
+            logger.Error(() => $"[{LogCategory}] {error}");
 
-            NotifyPayoutFailure(poolConfig.Id, balances, $"Daemon command '{ConcealWalletCommands.SendTransaction}' returned error: {response.Error.Message} code {response.Error.Code}", null);
+            // a transport failure leaves the outcome unknown - the wallet may still have relayed the transaction -
+            // so the batch stays pending rather than being marked failed, which would let the same balance be paid
+            // again on the next run.
+            if(IsOutcomeUnknown(response.Error))
+                logger.Error(() => $"[{LogCategory}] {error}; the transaction may have been broadcast. Payout batch {trackingBatch.Id} stays pending and payouts are halted until it is resolved");
+            else
+                await MarkPayoutBatchFailedAsync(trackingBatch, error);
+
+            NotifyPayoutFailure(poolConfig.Id, balances, error, null);
             return false;
         }
     }
@@ -153,10 +163,13 @@ public class ConcealPayoutHandler : PayoutHandlerBase,
         logger.Debug(() => $"[{LogCategory}] [batch] RPC data: ['anonymity': {request.Anonymity}, 'fee': {request.Fee}, 'unlockTime': {request.UnlockTime}, 'changeAddress': '{request.ChangeAddress}']");
         logger.Info(() => $"[{LogCategory}] [batch] Paying {FormatAmount(balances.Sum(x => x.Amount))} to {balances.Length} addresses:\n{string.Join("\n", balances.OrderByDescending(x => x.Amount).Select(x => $"{FormatAmount(x.Amount)} to {x.Address}"))}");
 
-        // send command
-        var sendTransactionResponse = await rpcClientWallet.ExecuteAsync<SendTransactionResponse>(logger, ConcealWalletCommands.SendTransaction, ct, request);
+        // record the intent before anything leaves the wallet (idempotent payouts, see PayoutHandlerBase)
+        var trackingBatch = await BeginPayoutBatchAsync(balances);
 
-        return await HandleSendTransactionResponseAsync(sendTransactionResponse, balances);
+        // send command
+        var sendTransactionResponse = await rpcClientWallet.ExecuteAsync<SendTransactionResponse>(logger, ConcealWalletCommands.SendTransaction, ct, request, timeout: SendTimeout);
+
+        return await HandleSendTransactionResponseAsync(trackingBatch, sendTransactionResponse, balances);
     }
 
     private void ExtractAddressAndPaymentId(string input, out string address, out string paymentId)
@@ -216,10 +229,13 @@ public class ConcealPayoutHandler : PayoutHandlerBase,
         else
             logger.Info(() => $"[{LogCategory}] Paying {FormatAmount(balance.Amount)} to integrated address {balance.Address}");
 
-        // send command
-        var result = await rpcClientWallet.ExecuteAsync<SendTransactionResponse>(logger, ConcealWalletCommands.SendTransaction, ct, request);
+        // record the intent before anything leaves the wallet (idempotent payouts, see PayoutHandlerBase)
+        var trackingBatch = await BeginPayoutBatchAsync(new[] { balance });
 
-        return await HandleSendTransactionResponseAsync(result, balance);
+        // send command
+        var result = await rpcClientWallet.ExecuteAsync<SendTransactionResponse>(logger, ConcealWalletCommands.SendTransaction, ct, request, timeout: SendTimeout);
+
+        return await HandleSendTransactionResponseAsync(trackingBatch, result, balance);
     }
 
     #region IPayoutHandler
