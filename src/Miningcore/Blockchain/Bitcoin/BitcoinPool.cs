@@ -175,7 +175,11 @@ public class BitcoinPool : PoolBase, IAuxMiningPool
         {
             await connection.RespondErrorAsync(StratumError.UnauthorizedWorker, "Authorization failed", request.Id, context.IsAuthorized);
 
-            if(clusterConfig?.Banning?.BanOnLoginFailure is null or true)
+            // banManager is only set when this pool's own Banning.Enabled is true (see
+            // PoolBase.cs), which is a different switch from the cluster-level
+            // BanOnLoginFailure checked below - so this pool's banning can be off while the
+            // cluster default here is still "ban".
+            if(banManager != null && clusterConfig?.Banning?.BanOnLoginFailure is null or true)
             {
                 // issue short-time ban if unauthorized to prevent DDos on daemon (validateaddress RPC)
                 logger.Info(() => $"[{connection.ConnectionId}] Banning unauthorized worker {minerName} for {loginFailureBanTimeout.TotalSeconds} sec");
@@ -245,10 +249,13 @@ public class BitcoinPool : PoolBase, IAuxMiningPool
                 response.Extra["error"] = null;
             }
 
-            await connection.RespondAsync(response);
-
-            // publish
+            // publish before responding: RespondAsync can throw IOException("Sendqueue
+            // stalled") on a backed-up connection (slow/overloaded miner), which would
+            // otherwise leave this method before the block candidate (if any) is ever
+            // published - it's on-chain but never gets a DB row.
             messageBus.SendMessage(share);
+
+            await connection.RespondAsync(response);
 
             // telemetry
             PublishTelemetry(TelemetryCategory.Share, clock.Now - tsRequest.Timestamp.UtcDateTime, true);

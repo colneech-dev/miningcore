@@ -223,7 +223,15 @@ public static class AuxPowSerializer
     /// </summary>
     private static uint FindNonce(IReadOnlyList<AuxBlockData> blocks, ref int treeSize)
     {
-        while(true)
+        // Two chains that collide at every tree size - the same daemon-reported chainid (not
+        // the configured one, which the config validator only checks for uniqueness), or two
+        // SlotByNonce chains, which ignore chainid in their slot formula - can never find a
+        // nonce no matter how large treeSize grows. Without a bound, treeSize eventually
+        // overflows int to 0 and this spins forever inside BuildCoinbase, called from
+        // UpdateJob's Concat pipeline - hanging all future job updates for the parent pool.
+        const int maxTreeSize = 1 << 20;
+
+        while(treeSize <= maxTreeSize)
         {
             for(uint n = 0; n <= 65535; n++)
             {
@@ -232,6 +240,10 @@ public static class AuxPowSerializer
             }
             treeSize <<= 1;
         }
+
+        throw new InvalidOperationException(
+            $"AuxPoW merkle tree: no nonce found for {blocks.Count} chain(s) up to tree size {maxTreeSize}. " +
+            "Two chains likely report the same effective chain id, or collide under SlotByNonce - check each chain's daemon-reported chainid.");
     }
 
     private static bool HasLcgCollision(IReadOnlyList<AuxBlockData> blocks, int treeSize, uint nonce)

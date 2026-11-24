@@ -187,6 +187,14 @@ public class PPLNSPaymentScheme : IPayoutScheme
                 else
                     shares[address] += shareDiffAdjusted;
 
+                // share.NetworkDifficulty == 0 (seen in the shares table per the NULLIF guards in
+                // ShareRepository's SQL) divides to +Infinity, and casting that to decimal throws
+                // OverflowException, aborting this block's whole UpdatePoolBalancesAsync call -
+                // and with it every other block queued in the same pass. Skip the share's
+                // contribution to effort/score instead; it was already recorded above for stats.
+                if(share.NetworkDifficulty <= 0)
+                    continue;
+
                 var score = (decimal) (shareDiffAdjusted / share.NetworkDifficulty);
 
                 // if accumulated score would cross threshold, cap it to the remaining value

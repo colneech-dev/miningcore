@@ -55,9 +55,15 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
     private CoinTemplate coin;
     private int minConfirmations;
 
-    // "insufficient funds" repeats every payout run until the wallet's funds confirm; tell operators about it once per interval
+    // "insufficient funds" repeats every payout run until the wallet's funds confirm; tell
+    // operators about it once per interval. The handler itself is resolved fresh every payout
+    // cycle (Autofac default InstancePerDependency - see PayoutManager.ProcessPoolsAsync), so an
+    // instance field here resets every run and the throttle never actually throttles. Keyed
+    // per-pool (unlike a single shared NoticeThrottle) so one pool's notices don't suppress
+    // another's.
     private static readonly TimeSpan InsufficientFundsNoticeInterval = TimeSpan.FromMinutes(30);
-    private readonly NoticeThrottle insufficientFundsNotice = new(InsufficientFundsNoticeInterval);
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, NoticeThrottle> insufficientFundsNoticeByPool = new();
+    private NoticeThrottle insufficientFundsNotice;
 
     protected override string LogCategory => "Bitcoin Payout Handler";
 
@@ -98,6 +104,8 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
 
         poolConfig = pc;
         clusterConfig = cc;
+
+        insufficientFundsNotice = insufficientFundsNoticeByPool.GetOrAdd(pc.Id, _ => new NoticeThrottle(InsufficientFundsNoticeInterval));
 
         extraPoolConfig = pc.Extra.SafeExtensionDataAs<BitcoinPoolConfigExtra>();
         extraPoolEndpointConfig = pc.Extra.SafeExtensionDataAs<BitcoinDaemonEndpointConfigExtra>();

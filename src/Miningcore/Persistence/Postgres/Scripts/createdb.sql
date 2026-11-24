@@ -41,6 +41,7 @@ CREATE TABLE blocks
 
 CREATE INDEX IDX_BLOCKS_POOL_BLOCK_STATUS on blocks(poolid, blockheight, status);
 CREATE INDEX IDX_BLOCKS_POOL_BLOCK_TYPE on blocks(poolid, blockheight, type);
+CREATE UNIQUE INDEX ux_blocks_pool_height_hash ON blocks(poolid, blockheight, hash) WHERE hash IS NOT NULL;
 
 CREATE TABLE auxblocks
 (

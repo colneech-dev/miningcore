@@ -7,6 +7,33 @@ namespace Miningcore.Extensions;
 public static class StringExtensions
 {
     /// <summary>
+    /// Strips control characters (including NUL, which Postgres TEXT columns reject outright
+    /// and would otherwise fail an entire shares/blocks batch insert) and caps the length.
+    /// Used on untrusted miner-supplied strings (worker name, user agent) before they are
+    /// persisted.
+    /// </summary>
+    public static string SanitizeForStorage(this string str, int maxLength)
+    {
+        if(string.IsNullOrEmpty(str))
+            return str;
+
+        var sb = new StringBuilder(str.Length);
+
+        foreach(var c in str)
+        {
+            if(!char.IsControl(c))
+                sb.Append(c);
+        }
+
+        var result = sb.ToString();
+
+        if(result.Length > maxLength)
+            result = result[..maxLength];
+
+        return result;
+    }
+
+    /// <summary>
     /// Converts a hex string to byte array
     /// </summary>
     /// <param name="str"></param>

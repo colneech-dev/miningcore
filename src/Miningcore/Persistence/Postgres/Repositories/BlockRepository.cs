@@ -19,11 +19,16 @@ public class BlockRepository : IBlockRepository
     {
         var mapped = mapper.ToEntity(block);
 
+        // ON CONFLICT guards against the same block being recorded twice (a retried commit whose
+        // acknowledgement was lost, or a recovery file replayed more than once) via
+        // ux_blocks_pool_height_hash - without it, two rows with the same hash both get
+        // confirmed and credited in full, paying the block's reward twice.
         const string query =
             @"INSERT INTO blocks(poolid, blockheight, networkdifficulty, difficulty, status, type, transactionconfirmationdata,
                 miner, worker, reward, effort, minereffort, confirmationprogress, source, hash, created)
             VALUES(@poolid, @blockheight, @networkdifficulty, @difficulty, @status, @type, @transactionconfirmationdata,
-                @miner, @worker, @reward, @effort, @minereffort, @confirmationprogress, @source, @hash, @created)";
+                @miner, @worker, @reward, @effort, @minereffort, @confirmationprogress, @source, @hash, @created)
+            ON CONFLICT (poolid, blockheight, hash) WHERE hash IS NOT NULL DO NOTHING";
 
         await con.ExecuteAsync(query, mapped, tx);
     }

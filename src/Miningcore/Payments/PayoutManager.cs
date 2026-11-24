@@ -91,20 +91,48 @@ public class PayoutManager : BackgroundService
 
             try
             {
-                var family = HandleFamilyOverride(poolConfig.Template.Family, poolConfig);
+                // A second process running payouts against the same database (a redeploy or
+                // rollback that leaves the old container up, a test pointed at prod) would read
+                // the same balances and send them twice - nothing else here is exclusive across
+                // processes, only within one. pg_advisory_lock is session-scoped (tied to one
+                // physical connection), so the connection must be held open for the whole
+                // critical section rather than going through cf.Run's open-per-call pattern,
+                // which would release the lock the instant the acquiring call returned.
+                var lockKey = poolConfig.Id.GetHashCode();
 
-                // resolve payout handler
-                var handlerImpl = ctx.Resolve<IEnumerable<Meta<Lazy<IPayoutHandler, CoinFamilyAttribute>>>>()
-                    .First(x => x.Value.Metadata.SupportedFamilies.Contains(family)).Value;
+                using(var lockCon = await cf.OpenConnectionAsync())
+                {
+                    var acquired = await lockCon.ExecuteScalarAsync<bool>(
+                        "SELECT pg_try_advisory_lock(@lockKey)", new { lockKey });
 
-                var handler = handlerImpl.Value;
-                await handler.ConfigureAsync(clusterConfig, poolConfig, ct);
+                    if(!acquired)
+                    {
+                        logger.Warn(() => $"[{poolConfig.Id}] Skipping payout run - another process already holds the payout lock for this pool");
+                        continue;
+                    }
 
-                // resolve payout scheme
-                var scheme = ctx.ResolveKeyed<IPayoutScheme>(poolConfig.PaymentProcessing.PayoutScheme);
+                    try
+                    {
+                        var family = HandleFamilyOverride(poolConfig.Template.Family, poolConfig);
 
-                await UpdatePoolBalancesAsync(pool, poolConfig, handler, scheme, ct);
-                await PayoutPoolBalancesAsync(pool, poolConfig, handler, ct);
+                        // resolve payout handler
+                        var handlerImpl = ctx.Resolve<IEnumerable<Meta<Lazy<IPayoutHandler, CoinFamilyAttribute>>>>()
+                            .First(x => x.Value.Metadata.SupportedFamilies.Contains(family)).Value;
+
+                        var handler = handlerImpl.Value;
+                        await handler.ConfigureAsync(clusterConfig, poolConfig, ct);
+
+                        // resolve payout scheme
+                        var scheme = ctx.ResolveKeyed<IPayoutScheme>(poolConfig.PaymentProcessing.PayoutScheme);
+
+                        await UpdatePoolBalancesAsync(pool, poolConfig, handler, scheme, ct);
+                        await PayoutPoolBalancesAsync(pool, poolConfig, handler, ct);
+                    }
+                    finally
+                    {
+                        await lockCon.ExecuteScalarAsync<bool>("SELECT pg_advisory_unlock(@lockKey)", new { lockKey });
+                    }
+                }
             }
 
             catch(InvalidOperationException ex)

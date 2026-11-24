@@ -198,9 +198,22 @@ public class EquihashPayoutHandler : BitcoinPayoutHandler
                     logger.Info(() => $"[{LogCategory}] Tracking payment operation id: {operationId}");
 
                     var continueWaiting = true;
+                    // z_getoperationresult can keep returning an empty array forever if the
+                    // daemon already handed the result out once and forgot it (a lost earlier
+                    // response). PayoutManager processes pools one after another, so an
+                    // unbounded wait here halts every other pool's payouts too. Give up after a
+                    // bounded wait and leave the batch pending - that already safely halts just
+                    // this pool, same as any other outcome-unknown case.
+                    var waitDeadline = clock.Now + TimeSpan.FromMinutes(10);
 
                     while(continueWaiting)
                     {
+                        if(clock.Now >= waitDeadline)
+                        {
+                            logger.Error(() => $"[{LogCategory}] Timed out waiting for {EquihashCommands.ZSendMany} operation {operationId} to complete. Payout batch {batch.Id} stays pending: the operation's outcome is unknown. Payouts for this pool halt until it is resolved via the admin API");
+                            break;
+                        }
+
                         var operationResultResponse = await rpcClient.ExecuteAsync<ZCashAsyncOperationStatus[]>(logger,
                             EquihashCommands.ZGetOperationResult, ct, new object[] { new object[] { operationId } });
 
@@ -360,9 +373,17 @@ public class EquihashPayoutHandler : BitcoinPayoutHandler
                     logger.Info(() => $"[{LogCategory}] Tracking payment operation id: {operationId}");
 
                     var continueWaiting = true;
+                    // See the z_sendmany wait loop above for why this is bounded.
+                    var waitDeadline = clock.Now + TimeSpan.FromMinutes(10);
 
                     while(continueWaiting)
                     {
+                        if(clock.Now >= waitDeadline)
+                        {
+                            logger.Error(() => $"[{LogCategory}] Timed out waiting for {EquihashCommands.SendCurrency} operation {operationId} to complete. Payout batch {batch.Id} stays pending: the operation's outcome is unknown. Payouts for this pool halt until it is resolved via the admin API");
+                            break;
+                        }
+
                         var operationResultResponse = await rpcClient.ExecuteAsync<ZCashAsyncOperationStatus[]>(logger,
                             EquihashCommands.ZGetOperationResult, ct, new object[] { new object[] { operationId } });
 
