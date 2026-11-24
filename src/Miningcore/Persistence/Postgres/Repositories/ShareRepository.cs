@@ -51,12 +51,26 @@ public class ShareRepository : IShareRepository
     }
 
     public async Task<Share[]> ReadSharesBeforeAsync(IDbConnection con, string poolId, DateTime before,
-        bool inclusive, int pageSize, CancellationToken ct)
+        long? beforeId, bool inclusive, int pageSize, CancellationToken ct)
     {
-        var query = @$"SELECT * FROM shares WHERE poolid = @poolId AND created {(inclusive ? " <= " : " < ")} @before
-            ORDER BY created DESC FETCH NEXT @pageSize ROWS ONLY";
+        // Pages are consumed in descending (created, id) order and the caller resumes from the last row
+        // of the previous page. Ordering (and filtering) by created alone can silently drop or duplicate
+        // rows that share the exact same created timestamp as the page boundary - shares are batch-inserted
+        // and timestamp resolution isn't fine enough to guarantee uniqueness under load. id is a strictly
+        // increasing insertion-order tiebreaker, so (created, id) is a stable keyset cursor.
+        string condition;
 
-        return (await con.QueryAsync<Entities.Share>(new CommandDefinition(query, new { poolId, before, pageSize }, cancellationToken: ct)))
+        if(inclusive)
+            condition = "created <= @before";
+        else if(beforeId.HasValue)
+            condition = "(created < @before OR (created = @before AND id < @beforeId))";
+        else
+            condition = "created < @before";
+
+        var query = @$"SELECT * FROM shares WHERE poolid = @poolId AND {condition}
+            ORDER BY created DESC, id DESC FETCH NEXT @pageSize ROWS ONLY";
+
+        return (await con.QueryAsync<Entities.Share>(new CommandDefinition(query, new { poolId, before, beforeId, pageSize }, cancellationToken: ct)))
             .Select(mapper.ToModel)
             .ToArray();
     }

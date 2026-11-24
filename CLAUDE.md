@@ -118,6 +118,7 @@ This fork adds columns and a table that need migrations on an existing database.
 - `add_auxblocks.sql` — the `auxblocks` table for merged mining
 - `add_block_difficulty.sql` — `blocks.difficulty`, `auxblocks.difficulty`, `auxblocks.networkdifficulty`
 - `add_payoutbatches.sql` — the `payoutbatches` table (payout intents; required, payouts fail without it)
+- `add_share_id_column.sql` — `shares.id` (BIGSERIAL keyset-pagination tiebreaker, used alongside `created` by `ReadSharesBeforeAsync`)
 
 `SchemaDriftTests` fails the build if a repository INSERT names a column `createdb.sql` does not create. When adding a column, change the entity, the repository, `createdb.sql` and a migration script together.
 

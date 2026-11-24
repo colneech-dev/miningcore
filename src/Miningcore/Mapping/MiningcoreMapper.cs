@@ -30,6 +30,7 @@ public partial class MiningcoreMapper
     // Stratum share -> persistence
     // ------------------------------------------------------------------
 
+    [MapperIgnoreTarget(nameof(Model.Share.Id))]
     public partial Model.Share ToModel(Blockchain.Share share);
 
     [MapProperty(nameof(Blockchain.Share.BlockReward), nameof(Model.Block.Reward))]

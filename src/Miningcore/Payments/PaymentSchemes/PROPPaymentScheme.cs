@@ -100,6 +100,7 @@ public class PROPPaymentScheme : IPayoutScheme
     private async Task LogDiscardedSharesAsync(CancellationToken ct, PoolConfig poolConfig, Block block, DateTime value)
     {
         var before = value;
+        long? beforeId = null;
         var pageSize = 100000;
         var currentPage = 0;
         var shares = new Dictionary<string, double>();
@@ -109,7 +110,7 @@ public class PROPPaymentScheme : IPayoutScheme
             logger.Info(() => $"Fetching page {currentPage} of discarded shares for pool {poolConfig.Id}, block {block.BlockHeight}");
 
             var page = await shareReadFaultPolicy.ExecuteAsync(() =>
-                cf.Run(con => shareRepo.ReadSharesBeforeAsync(con, poolConfig.Id, before, false, pageSize, ct)));
+                cf.Run(con => shareRepo.ReadSharesBeforeAsync(con, poolConfig.Id, before, beforeId, false, pageSize, ct)));
 
             currentPage++;
 
@@ -129,6 +130,7 @@ public class PROPPaymentScheme : IPayoutScheme
                 break;
 
             before = page[^1].Created;
+            beforeId = page[^1].Id;
         }
 
         if(shares.Keys.Count > 0)
@@ -151,6 +153,7 @@ public class PROPPaymentScheme : IPayoutScheme
         var poolConfig = pool.Config;
         var done = false;
         var before = block.Created;
+        long? beforeId = null;
         var inclusive = true;
         var pageSize = 100000;
         var currentPage = 0;
@@ -164,7 +167,7 @@ public class PROPPaymentScheme : IPayoutScheme
             logger.Info(() => $"Fetching page {currentPage} of shares for pool {poolConfig.Id}, block {block.BlockHeight}");
 
             var page = await shareReadFaultPolicy.ExecuteAsync(() =>
-                cf.Run(con => shareRepo.ReadSharesBeforeAsync(con, poolConfig.Id, before, inclusive, pageSize, ct)));
+                cf.Run(con => shareRepo.ReadSharesBeforeAsync(con, poolConfig.Id, before, beforeId, inclusive, pageSize, ct)));
 
             inclusive = false;
             currentPage++;
@@ -202,6 +205,7 @@ public class PROPPaymentScheme : IPayoutScheme
             }
 
             before = page[^1].Created;
+            beforeId = page[^1].Id;
             done = page.Length <= 0;
         }
 

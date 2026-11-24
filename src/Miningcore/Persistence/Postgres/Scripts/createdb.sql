@@ -2,6 +2,7 @@ SET ROLE miningcore;
 
 CREATE TABLE shares
 (
+	id BIGSERIAL NOT NULL,
 	poolid TEXT NOT NULL,
 	blockheight BIGINT NOT NULL,
 	difficulty DOUBLE PRECISION NOT NULL,
@@ -16,6 +17,7 @@ CREATE TABLE shares
 
 CREATE INDEX IDX_SHARES_POOL_MINER on shares(poolid, miner);
 CREATE INDEX IDX_SHARES_POOL_CREATED ON shares(poolid, created);
+CREATE INDEX IDX_SHARES_POOL_CREATED_ID ON shares(poolid, created DESC, id DESC);
 CREATE INDEX IDX_SHARES_POOL_MINER_DIFFICULTY on shares(poolid, miner, difficulty);
 
 CREATE TABLE blocks

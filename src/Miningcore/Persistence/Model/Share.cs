@@ -2,6 +2,7 @@ namespace Miningcore.Persistence.Model;
 
 public record Share
 {
+    public long Id { get; init; }
     public string PoolId { get; init; }
     public ulong BlockHeight { get; init; }
     public string Miner { get; init; }

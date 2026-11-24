@@ -136,6 +136,7 @@ public class SchemaDriftTests
             ("blocks", "difficulty"),
             ("auxblocks", "difficulty"),
             ("auxblocks", "networkdifficulty"),
+            ("shares", "id"),
         };
 
         var root = FindRepoRoot();

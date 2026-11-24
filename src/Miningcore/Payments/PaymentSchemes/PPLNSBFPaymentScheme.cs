@@ -107,6 +107,7 @@ public class PPLNSBFPaymentScheme : IPayoutScheme
     private async Task LogDiscardedSharesAsync(CancellationToken ct, PoolConfig poolConfig, Block block, DateTime value)
     {
         var before = value;
+        long? beforeId = null;
         var pageSize = 50000;
         var currentPage = 0;
         var shares = new Dictionary<string, double>();
@@ -116,7 +117,7 @@ public class PPLNSBFPaymentScheme : IPayoutScheme
             logger.Info(() => $"Fetching page {currentPage} of discarded shares for pool {poolConfig.Id}, block {block.BlockHeight}");
 
             var page = await shareReadFaultPolicy.ExecuteAsync(() =>
-                cf.Run(con => shareRepo.ReadSharesBeforeAsync(con, poolConfig.Id, before, false, pageSize, ct)));
+                cf.Run(con => shareRepo.ReadSharesBeforeAsync(con, poolConfig.Id, before, beforeId, false, pageSize, ct)));
 
             currentPage++;
 
@@ -136,6 +137,7 @@ public class PPLNSBFPaymentScheme : IPayoutScheme
                 break;
 
             before = page[^1].Created;
+            beforeId = page[^1].Id;
         }
 
         if(shares.Keys.Count > 0)
@@ -162,6 +164,7 @@ public class PPLNSBFPaymentScheme : IPayoutScheme
         var blockFinderReward = blockReward * (blockFinderPercentage / 100);
         var done = false;
         var before = block.Created;
+        long? beforeId = null;
         var inclusive = true;
         var pageSize = 50000;
         var currentPage = 0;
@@ -183,7 +186,7 @@ public class PPLNSBFPaymentScheme : IPayoutScheme
             logger.Info(() => $"Fetching page {currentPage} of shares for pool {poolConfig.Id}, block {block.BlockHeight}");
 
             var page = await shareReadFaultPolicy.ExecuteAsync(() =>
-                cf.Run(con => shareRepo.ReadSharesBeforeAsync(con, poolConfig.Id, before, inclusive, pageSize, ct)));
+                cf.Run(con => shareRepo.ReadSharesBeforeAsync(con, poolConfig.Id, before, beforeId, inclusive, pageSize, ct)));
 
             inclusive = false;
             currentPage++;
@@ -240,6 +243,7 @@ public class PPLNSBFPaymentScheme : IPayoutScheme
                 break;
 
             before = page[^1].Created;
+            beforeId = page[^1].Id;
         }
 
         logger.Info(() => $"Balance-calculation for pool {poolConfig.Id}, block {block.BlockHeight} completed with accumulated score {accumulatedScore:0.####} ({(accumulatedScore / window) * 100:0.#}%)");

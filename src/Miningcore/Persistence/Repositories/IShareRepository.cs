@@ -7,7 +7,7 @@ namespace Miningcore.Persistence.Repositories;
 public interface IShareRepository
 {
     Task BatchInsertAsync(IDbConnection con, IDbTransaction tx, IEnumerable<Share> shares, CancellationToken ct);
-    Task<Share[]> ReadSharesBeforeAsync(IDbConnection con, string poolId, DateTime before, bool inclusive, int pageSize, CancellationToken ct);
+    Task<Share[]> ReadSharesBeforeAsync(IDbConnection con, string poolId, DateTime before, long? beforeId, bool inclusive, int pageSize, CancellationToken ct);
     Task<long> CountSharesBeforeAsync(IDbConnection con, IDbTransaction tx, string poolId, DateTime before, CancellationToken ct);
     Task DeleteSharesBeforeAsync(IDbConnection con, IDbTransaction tx, string poolId, DateTime before, CancellationToken ct);
     Task<long> CountSharesByMinerAsync(IDbConnection con, IDbTransaction tx, string poolId, string miner, CancellationToken ct);
