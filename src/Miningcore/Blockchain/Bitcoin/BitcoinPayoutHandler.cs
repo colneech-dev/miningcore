@@ -305,6 +305,15 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
         if(amounts.Count == 0)
             return;
 
+        // What's actually sent on-chain is rounded to payoutDecimalPlaces; debiting the un-rounded balance
+        // afterwards would silently destroy the sub-unit remainder on every payout instead of carrying it
+        // forward. Debit exactly the rounded amount sent, and leave any remainder in the miner's balance to
+        // be paid out once it accumulates enough.
+        var payoutBalances = balances
+            .Where(x => x.Amount > 0)
+            .Select(x => new Balance { PoolId = poolConfig.Id, Address = x.Address, Amount = amounts[x.Address] })
+            .ToArray();
+
         logger.Info(() => $"[{LogCategory}] Paying {FormatAmount(balances.Sum(x => x.Amount))} to {balances.Length} addresses");
 
         object[] args;
@@ -359,8 +368,9 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
 
             var didUnlockWallet = false;
 
-            // record the intent before anything leaves the wallet (idempotent payouts, see PayoutHandlerBase)
-            var batch = await BeginPayoutBatchAsync(balances);
+            // record the intent before anything leaves the wallet (idempotent payouts, see PayoutHandlerBase).
+            // Uses payoutBalances (rounded) so the amount debited matches the amount actually sent.
+            var batch = await BeginPayoutBatchAsync(payoutBalances);
 
             // send command
             tryTransfer:
@@ -386,7 +396,7 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
                 // marks the batch sent, then persists payments and balances; recoverable at every step
                 await CompletePayoutBatchAsync(batch, !string.IsNullOrEmpty(txId) ? txId : UnknownTransactionId);
 
-                NotifyPayoutSuccess(poolConfig.Id, balances, TxIdsForNotification(txId), null);
+                NotifyPayoutSuccess(poolConfig.Id, payoutBalances, TxIdsForNotification(txId), null);
 
                 // funds are back: a later shortage is a new event and should notify straight away
                 insufficientFundsNotice.Reset();

@@ -276,10 +276,16 @@ public class KaspaJob
     {
         var context = worker.ContextAs<KaspaWorkerContext>();
 
-        BlockTemplate.Header.Nonce = Convert.ToUInt64(nonce, 16);
+        // BlockTemplate is shared across every connection currently working this job. Mutating its Header
+        // in place here would race with concurrent ProcessShare calls from other miners (or other shares from
+        // this one): one thread could set the nonce, another thread's SerializeHeader could then run against
+        // THAT nonce before this thread reads it back, validating this share's hash against someone else's
+        // nonce. Clone the header so this call's nonce never leaks into, or gets clobbered by, another.
+        var header = BlockTemplate.Header.Clone();
+        header.Nonce = Convert.ToUInt64(nonce, 16);
 
-        var prePowHashBytes = SerializeHeader(BlockTemplate.Header, true);
-        var coinbaseBytes = SerializeCoinbase(prePowHashBytes, BlockTemplate.Header.Timestamp, BlockTemplate.Header.Nonce);
+        var prePowHashBytes = SerializeHeader(header, true);
+        var coinbaseBytes = SerializeCoinbase(prePowHashBytes, header.Timestamp, header.Nonce);
 
         Span<byte> hashCoinbaseBytes = stackalloc byte[32];
         shareHasher.Digest(ComputeCoinbase(prePowHashBytes, coinbaseBytes), hashCoinbaseBytes);
@@ -327,7 +333,7 @@ public class KaspaJob
 
         if(isBlockCandidate)
         {
-            var hashBytes = SerializeHeader(BlockTemplate.Header, false);
+            var hashBytes = SerializeHeader(header, false);
 
             result.IsBlockCandidate = true;
             result.BlockHash = hashBytes.ToHexString();
