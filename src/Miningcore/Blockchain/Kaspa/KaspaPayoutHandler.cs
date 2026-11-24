@@ -485,10 +485,16 @@ public class KaspaPayoutHandler : PayoutHandlerBase,
 
                     logger.Info(()=> $"[{LogCategory}] [{transferId}] 3/3 Broadcast {signedTransaction.SignedTransactions.Count} signed transaction(s)");
 
+                    var payoutBalance = new Balance { PoolId = poolConfig.Id, Address = amount.Key, Amount = amount.Value };
+
+                    // record the intent before anything leaves the wallet (idempotent payouts, see PayoutHandlerBase)
+                    var batch = await BeginPayoutBatchAsync(new[] { payoutBalance });
+
                     broadcastRequest.Transactions.Add(signedTransaction.SignedTransactions);
                     var callBroadcast = walletRpc.BroadcastAsync(broadcastRequest);
+                    Exception broadcastEx = null;
                     broadcastTransaction = await Guard(() => callBroadcast.ResponseAsync,
-                        ex=> logger.Warn(ex));
+                        ex => { broadcastEx = ex; logger.Warn(ex); });
                     callBroadcast.Dispose();
 
                     logger.Debug(()=> $"[{LogCategory}] {(broadcastTransaction?.TxIDs == null ? 0 : broadcastTransaction?.TxIDs.Count)} transaction ID(s) returned");
@@ -499,12 +505,26 @@ public class KaspaPayoutHandler : PayoutHandlerBase,
 
                         logger.Info(() => $"[{LogCategory}] [{amount.Key} - {FormatAmount(amount.Value)}] Payment transaction id: {txId}");
 
-                        successBalances.Add(new Balance
-                        {
-                            PoolId = poolConfig.Id,
-                            Address = amount.Key,
-                            Amount = amount.Value,
-                        }, txId);
+                        // marks the batch sent, then persists payments and balances; recoverable at every step
+                        await CompletePayoutBatchAsync(batch, txId);
+
+                        successBalances.Add(payoutBalance, txId);
+                    }
+                    else
+                    {
+                        // a gRPC transport failure or timeout here does not prove the transaction wasn't relayed,
+                        // so the batch stays pending (operator-resolvable) rather than being marked failed, which
+                        // would let the same balance be paid again from a fresh UTXO set on the next run.
+                        var error = broadcastEx != null
+                            ? $"[{transferId}] broadcast failed: {broadcastEx.Message}"
+                            : $"[{transferId}] broadcast returned no transaction id";
+
+                        if(broadcastEx != null)
+                            logger.Error(() => $"[{LogCategory}] {error}; payout batch {batch.Id} stays pending and payouts are halted until it is resolved");
+                        else
+                            await MarkPayoutBatchFailedAsync(batch, error);
+
+                        txFailures.Add(Tuple.Create(amount, broadcastEx ?? new Exception(error)));
                     }
                 }
             }
@@ -512,8 +532,7 @@ public class KaspaPayoutHandler : PayoutHandlerBase,
 
         if(successBalances.Any())
         {
-            await PersistPaymentsAsync(successBalances);
-
+            // payments were already persisted per-transfer by CompletePayoutBatchAsync above
             NotifyPayoutSuccess(poolConfig.Id, successBalances.Keys.ToArray(), successBalances.Values.ToArray(), null);
         }
 

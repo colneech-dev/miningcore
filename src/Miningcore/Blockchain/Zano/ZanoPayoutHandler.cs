@@ -58,7 +58,7 @@ public class ZanoPayoutHandler : PayoutHandlerBase,
 
     protected override string LogCategory => "Zano Payout Handler";
 
-    private async Task<bool> HandleTransferResponseAsync(RpcResponse<TransferResponse> response, params Balance[] balances)
+    private async Task<bool> HandleTransferResponseAsync(Persistence.Model.PayoutBatch trackingBatch, RpcResponse<TransferResponse> response, params Balance[] balances)
     {
         var coin = poolConfig.Template.As<ZanoCoinTemplate>();
 
@@ -68,21 +68,28 @@ public class ZanoPayoutHandler : PayoutHandlerBase,
 
             logger.Info(() => $"[{LogCategory}] Payment transaction id: {txHash}");
 
-            await PersistPaymentsAsync(balances, txHash);
+            // marks the batch sent, then persists payments and balances; recoverable at every step
+            await CompletePayoutBatchAsync(trackingBatch, txHash);
             NotifyPayoutSuccess(poolConfig.Id, balances, new[] { txHash }, null);
             return true;
         }
 
         else
         {
-            logger.Error(() => $"[{LogCategory}] Daemon command '{ZanoWalletCommands.Transfer}' returned error: {response.Error.Message} code {response.Error.Code}");
+            var error = $"Daemon command '{ZanoWalletCommands.Transfer}' returned error: {response.Error.Message} code {response.Error.Code}";
+            logger.Error(() => $"[{LogCategory}] {error}");
 
-            NotifyPayoutFailure(poolConfig.Id, balances, $"Daemon command '{ZanoWalletCommands.Transfer}' returned error: {response.Error.Message} code {response.Error.Code}", null);
+            if(IsOutcomeUnknown(response.Error))
+                logger.Error(() => $"[{LogCategory}] {error}; the transaction may have been broadcast. Payout batch {trackingBatch.Id} stays pending and payouts are halted until it is resolved");
+            else
+                await MarkPayoutBatchFailedAsync(trackingBatch, error);
+
+            NotifyPayoutFailure(poolConfig.Id, balances, error, null);
             return false;
         }
     }
 
-    private async Task<bool> HandleTransferResponseAsync(RpcResponse<TransferSplitResponse> response, params Balance[] balances)
+    private async Task<bool> HandleTransferResponseAsync(Persistence.Model.PayoutBatch trackingBatch, RpcResponse<TransferSplitResponse> response, params Balance[] balances)
     {
         var coin = poolConfig.Template.As<ZanoCoinTemplate>();
 
@@ -92,16 +99,23 @@ public class ZanoPayoutHandler : PayoutHandlerBase,
 
             logger.Info(() => $"[{LogCategory}] Split-Payment transaction ids: {string.Join(", ", txHashes)}");
 
-            await PersistPaymentsAsync(balances, txHashes.First());
+            // marks the batch sent, then persists payments and balances; recoverable at every step
+            await CompletePayoutBatchAsync(trackingBatch, txHashes.First());
             NotifyPayoutSuccess(poolConfig.Id, balances, txHashes, null);
             return true;
         }
 
         else
         {
-            logger.Error(() => $"[{LogCategory}] Daemon command '{ZanoWalletCommands.TransferSplit}' returned error: {response.Error.Message} code {response.Error.Code}");
+            var error = $"Daemon command '{ZanoWalletCommands.TransferSplit}' returned error: {response.Error.Message} code {response.Error.Code}";
+            logger.Error(() => $"[{LogCategory}] {error}");
 
-            NotifyPayoutFailure(poolConfig.Id, balances, $"Daemon command '{ZanoWalletCommands.TransferSplit}' returned error: {response.Error.Message} code {response.Error.Code}", null);
+            if(IsOutcomeUnknown(response.Error))
+                logger.Error(() => $"[{LogCategory}] {error}; the transaction may have been broadcast. Payout batch {trackingBatch.Id} stays pending and payouts are halted until it is resolved");
+            else
+                await MarkPayoutBatchFailedAsync(trackingBatch, error);
+
+            NotifyPayoutFailure(poolConfig.Id, balances, error, null);
             return false;
         }
     }
@@ -229,8 +243,11 @@ public class ZanoPayoutHandler : PayoutHandlerBase,
 
         logger.Info(() => $"[{LogCategory}] Paying {FormatAmount(balances.Sum(x => x.Amount))} to {balances.Length} addresses:\n{string.Join("\n", balances.OrderByDescending(x => x.Amount).Select(x => $"{FormatAmount(x.Amount)} to {x.Address}"))}");
 
+        // record the intent before anything leaves the wallet (idempotent payouts, see PayoutHandlerBase)
+        var trackingBatch = await BeginPayoutBatchAsync(balances);
+
         // send command
-        var transferResponse = await rpcClientWallet.ExecuteAsync<TransferResponse>(logger, ZanoWalletCommands.Transfer, ct, request);
+        var transferResponse = await rpcClientWallet.ExecuteAsync<TransferResponse>(logger, ZanoWalletCommands.Transfer, ct, request, timeout: SendTimeout);
 
         // gracefully handle error -4 (transaction would be too large. try /transfer_split)
         if(transferResponse.Error?.Code == -4)
@@ -240,13 +257,13 @@ public class ZanoPayoutHandler : PayoutHandlerBase,
                 logger.Error(() => $"[{LogCategory}] Daemon command '{ZanoWalletCommands.Transfer}' returned error: {transferResponse.Error.Message} code {transferResponse.Error.Code}");
                 logger.Info(() => $"[{LogCategory}] Retrying transfer using {ZanoWalletCommands.TransferSplit}");
 
-                var transferSplitResponse = await rpcClientWallet.ExecuteAsync<TransferSplitResponse>(logger, ZanoWalletCommands.TransferSplit, ct, request);
+                var transferSplitResponse = await rpcClientWallet.ExecuteAsync<TransferSplitResponse>(logger, ZanoWalletCommands.TransferSplit, ct, request, timeout: SendTimeout);
 
-                return await HandleTransferResponseAsync(transferSplitResponse, balances);
+                return await HandleTransferResponseAsync(trackingBatch, transferSplitResponse, balances);
             }
         }
 
-        return await HandleTransferResponseAsync(transferResponse, balances);
+        return await HandleTransferResponseAsync(trackingBatch, transferResponse, balances);
     }
 
     private void ExtractAddressAndPaymentId(string input, out string address, out string paymentId)
@@ -334,8 +351,11 @@ public class ZanoPayoutHandler : PayoutHandlerBase,
         else
             logger.Info(() => $"[{LogCategory}] Paying {FormatAmount(balance.Amount)} to integrated address {balance.Address}");
 
+        // record the intent before anything leaves the wallet (idempotent payouts, see PayoutHandlerBase)
+        var trackingBatch = await BeginPayoutBatchAsync(new[] { balance });
+
         // send command
-        var result = await rpcClientWallet.ExecuteAsync<TransferResponse>(logger, ZanoWalletCommands.Transfer, ct, request);
+        var result = await rpcClientWallet.ExecuteAsync<TransferResponse>(logger, ZanoWalletCommands.Transfer, ct, request, timeout: SendTimeout);
 
         if(walletSupportsTransferSplit)
         {
@@ -344,11 +364,11 @@ public class ZanoPayoutHandler : PayoutHandlerBase,
             {
                 logger.Info(() => $"[{LogCategory}] Retrying transfer using {ZanoWalletCommands.TransferSplit}");
 
-                result = await rpcClientWallet.ExecuteAsync<TransferResponse>(logger, ZanoWalletCommands.TransferSplit, ct, request);
+                result = await rpcClientWallet.ExecuteAsync<TransferResponse>(logger, ZanoWalletCommands.TransferSplit, ct, request, timeout: SendTimeout);
             }
         }
 
-        return await HandleTransferResponseAsync(result, balance);
+        return await HandleTransferResponseAsync(trackingBatch, result, balance);
     }
 
     #region IPayoutHandler
