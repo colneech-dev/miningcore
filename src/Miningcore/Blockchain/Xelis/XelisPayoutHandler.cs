@@ -356,17 +356,30 @@ public class XelisPayoutHandler : PayoutHandlerBase,
                 };
             }
 
-            var buildTransactionResponse = await rpcClientWallet.ExecuteAsync<BuildTransactionResponse>(logger, XelisWalletCommands.BuildTransaction, ct, buildTransactionRequest);
+            // record the intent before anything leaves the wallet (idempotent payouts, see PayoutHandlerBase) -
+            // BuildTransaction signs and broadcasts in one call for Xelis, so this is the only risky step
+            var trackingBatch = await BeginPayoutBatchAsync(page);
+
+            var buildTransactionResponse = await rpcClientWallet.ExecuteAsync<BuildTransactionResponse>(logger, XelisWalletCommands.BuildTransaction, ct, buildTransactionRequest, timeout: SendTimeout);
             if(buildTransactionResponse.Error != null)
             {
-                logger.Error(()=> $"[{LogCategory}] '{XelisWalletCommands.BuildTransaction}': {buildTransactionResponse.Error.Message} (Code {buildTransactionResponse.Error.Code})");
-                NotifyPayoutFailure(poolConfig.Id, page, $"Daemon command '{XelisWalletCommands.BuildTransaction}' returned error: {buildTransactionResponse.Error.Message} code {buildTransactionResponse.Error.Code}", null);
+                var error = $"Daemon command '{XelisWalletCommands.BuildTransaction}' returned error: {buildTransactionResponse.Error.Message} code {buildTransactionResponse.Error.Code}";
+                logger.Error(()=> $"[{LogCategory}] {error}");
+
+                // a transport failure leaves the outcome unknown - the wallet may still have broadcast the
+                // transaction - so the batch stays pending rather than being marked failed
+                if(IsOutcomeUnknown(buildTransactionResponse.Error))
+                    logger.Error(() => $"[{LogCategory}] {error}; the transaction may have been broadcast. Payout batch {trackingBatch.Id} stays pending and payouts are halted until it is resolved");
+                else
+                    await MarkPayoutBatchFailedAsync(trackingBatch, error);
+
+                NotifyPayoutFailure(poolConfig.Id, page, error, null);
                 continue;
             }
 
             if(string.IsNullOrEmpty(buildTransactionResponse.Response.Hash))
             {
-                logger.Warn(() => $"[{LogCategory}] Payment transaction failed to return a transaction id");
+                logger.Warn(() => $"[{LogCategory}] Payment transaction failed to return a transaction id; payout batch {trackingBatch.Id} stays pending until it is resolved");
                 continue;
             }
             else
@@ -376,7 +389,8 @@ public class XelisPayoutHandler : PayoutHandlerBase,
 
                 logger.Info(() => $"[{LogCategory}] Payment transaction id: {buildTransactionResponse.Response.Hash} || Payment transaction fees: {FormatAmount(finalTransactionFees)}");
 
-                await PersistPaymentsAsync(page, buildTransactionResponse.Response.Hash);
+                // marks the batch sent, then persists payments and balances; recoverable at every step
+                await CompletePayoutBatchAsync(trackingBatch, buildTransactionResponse.Response.Hash);
                 NotifyPayoutSuccess(poolConfig.Id, page, new[] { buildTransactionResponse.Response.Hash }, finalTransactionFees);
             }
         }
