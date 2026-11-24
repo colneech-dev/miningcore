@@ -52,6 +52,12 @@ public class PoolApiController : ApiControllerBase
 
     private static readonly ILogger logger = LogManager.GetCurrentClassLogger();
 
+    // How far back PoolEffort will aggregate the shares table. Beyond this, the full-table
+    // aggregation for a long-dormant pool costs hundreds of ms for a display-only stat.
+    private static readonly TimeSpan EffortLookbackMaxAgeSpan = TimeSpan.FromDays(30);
+
+    private static DateTime EffortLookbackMaxAge(IMasterClock clock) => clock.Now - EffortLookbackMaxAgeSpan;
+
     #region Actions
 
     [HttpGet]
@@ -106,13 +112,21 @@ public class PoolApiController : ApiControllerBase
                 if(payoutConfig?.PayoutScheme != PayoutScheme.PPLNSBF && result.PaymentProcessing?.PayoutSchemeConfig != null)
                     result.PaymentProcessing.PayoutSchemeConfig.BlockFinderPercentage = null;
 
-                // depends on lastBlockTime, so it's a separate (small) round trip after the bundle
+                // depends on lastBlockTime, so it's a separate (small) round trip after the bundle.
+                // Cap the lookback to EffortLookbackMaxAge: pools that haven't blocked in months
+                // otherwise force an unbounded aggregation over the entire shares table (confirmed
+                // via EXPLAIN ANALYZE to cost ~800ms for a pool idle since 2026-08). The effort
+                // ratio is a display-only stat, so an older block's effort is simply not shown in
+                // that case rather than being computed exactly.
                 if(lastBlockTime.HasValue && pool != null)
                 {
                     var startTime = lastBlockTime.Value;
-                    var poolEffort = await cf.Run(con => shareRepo.GetEffortBetweenCreatedAsync(con, config.Id, pool.EffortShareConstant, startTime, clock.Now, ct));
-                    if(poolEffort.HasValue)
-                        result.PoolEffort = poolEffort.Value;
+                    if(startTime >= EffortLookbackMaxAge(clock))
+                    {
+                        var poolEffort = await cf.Run(con => shareRepo.GetEffortBetweenCreatedAsync(con, config.Id, pool.EffortShareConstant, startTime, clock.Now, ct));
+                        if(poolEffort.HasValue)
+                            result.PoolEffort = poolEffort.Value;
+                    }
                 }
 
                 result.TopMiners = bundle.TopMiners.Select(mapper.ToResponse).ToArray();
@@ -197,13 +211,17 @@ public class PoolApiController : ApiControllerBase
         if(payoutConfig?.PayoutScheme != PayoutScheme.PPLNSBF && response.Pool.PaymentProcessing?.PayoutSchemeConfig != null)
             response.Pool.PaymentProcessing.PayoutSchemeConfig.BlockFinderPercentage = null;
 
-        // depends on lastBlockTime, so it's a separate (small) round trip after the bundle
+        // depends on lastBlockTime, so it's a separate (small) round trip after the bundle.
+        // See EffortLookbackMaxAge comment in Get() for why this is capped.
         if(lastBlockTime.HasValue && poolInstance != null)
         {
             var startTime = lastBlockTime.Value;
-            var poolEffort = await cf.Run(con => shareRepo.GetEffortBetweenCreatedAsync(con, pool.Id, poolInstance.EffortShareConstant, startTime, clock.Now, ct));
-            if(poolEffort.HasValue)
-                response.Pool.PoolEffort = poolEffort.Value;
+            if(startTime >= EffortLookbackMaxAge(clock))
+            {
+                var poolEffort = await cf.Run(con => shareRepo.GetEffortBetweenCreatedAsync(con, pool.Id, poolInstance.EffortShareConstant, startTime, clock.Now, ct));
+                if(poolEffort.HasValue)
+                    response.Pool.PoolEffort = poolEffort.Value;
+            }
         }
 
         response.Pool.TopMiners = bundle.TopMiners
@@ -964,7 +982,7 @@ public class PoolApiController : ApiControllerBase
                 blockReward = poolInstance.NetworkStats?.BlockReward ?? 0;
 
             double? poolEffort = null;
-            if(lastBlockTime.HasValue && poolInstance != null)
+            if(lastBlockTime.HasValue && poolInstance != null && lastBlockTime.Value >= EffortLookbackMaxAge(clock))
             {
                 var effort = await cf.Run(con => shareRepo.GetEffortBetweenCreatedAsync(con, config.Id, poolInstance.EffortShareConstant, lastBlockTime.Value, clock.Now, ct));
                 if(effort.HasValue)
