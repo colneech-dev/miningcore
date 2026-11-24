@@ -65,6 +65,11 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, NoticeThrottle> insufficientFundsNoticeByPool = new();
     private NoticeThrottle insufficientFundsNotice;
 
+    // handlers are resolved fresh per payout cycle (see above), so this must be static to survive across
+    // the polls that build up the strike count
+    private const int MissingTransactionStrikeThreshold = 3;
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<long, int> missingTransactionStrikesByBlockId = new();
+
     protected override string LogCategory => "Bitcoin Payout Handler";
 
     /// <summary>
@@ -178,25 +183,46 @@ public class BitcoinPayoutHandler : PayoutHandlerBase,
                 // check error
                 if(cmdResult.Error != null)
                 {
-                    // Code -5 interpreted as "orphaned"
+                    // Code -5 interpreted as "orphaned" - but a single occurrence can be a transient daemon
+                    // hiccup (resyncing, briefly behind the tip, -txindex rebuilding) rather than proof the
+                    // transaction never existed. Orphaning is irreversible (GetPendingBlocksForPoolAsync never
+                    // looks at a non-Pending block again), so a false positive here forfeits the block's reward
+                    // forever. Require the same block to report -5 on several consecutive polls before
+                    // committing to that verdict; any other outcome in between (including a different error)
+                    // resets the count.
                     if(cmdResult.Error.Code == -5)
                     {
-                        block.Status = BlockStatus.Orphaned;
-                        block.Reward = 0;
-                        result.Add(block);
+                        var strikes = missingTransactionStrikesByBlockId.AddOrUpdate(block.Id, 1, (_, count) => count + 1);
 
-                        logger.Info(() => $"[{LogCategory}] Block {block.BlockHeight} classified as orphaned due to daemon error {cmdResult.Error.Code}");
+                        if(strikes >= MissingTransactionStrikeThreshold)
+                        {
+                            missingTransactionStrikesByBlockId.TryRemove(block.Id, out _);
 
-                        messageBus.NotifyBlockUnlocked(poolConfig.Id, block, coin);
+                            block.Status = BlockStatus.Orphaned;
+                            block.Reward = 0;
+                            result.Add(block);
+
+                            logger.Info(() => $"[{LogCategory}] Block {block.BlockHeight} classified as orphaned after {strikes} consecutive daemon errors {cmdResult.Error.Code}");
+
+                            messageBus.NotifyBlockUnlocked(poolConfig.Id, block, coin);
+                        }
+
+                        else
+                            logger.Warn(() => $"[{LogCategory}] Block {block.BlockHeight}: daemon error {cmdResult.Error.Code} ({strikes}/{MissingTransactionStrikeThreshold}); will re-check before orphaning");
                     }
 
                     else
+                    {
+                        missingTransactionStrikesByBlockId.TryRemove(block.Id, out _);
                         logger.Warn(() => $"[{LogCategory}] Daemon reports error '{cmdResult.Error.Message}' (Code {cmdResult.Error.Code}) for transaction {page[j].TransactionConfirmationData}");
+                    }
                 }
 
                 // missing transaction details are interpreted as "orphaned"
                 else if(transactionInfo?.Details == null || transactionInfo.Details.Length == 0)
                 {
+                    missingTransactionStrikesByBlockId.TryRemove(block.Id, out _);
+
                     block.Status = BlockStatus.Orphaned;
                     block.Reward = 0;
                     result.Add(block);
