@@ -1,8 +1,6 @@
 using System.Data.Common;
 using System.Net.Sockets;
-using System.Reactive.Concurrency;
 using System.Reactive.Linq;
-using System.Reactive.Threading.Tasks;
 using System.Text;
 using Miningcore.Mapping;
 using Microsoft.Extensions.Hosting;
@@ -330,28 +328,94 @@ public class ShareRecorder : BackgroundService
             Policy.WrapAsync(fallback, breaker, retry));
     }
 
-    protected override Task ExecuteAsync(CancellationToken ct)
+    // Rx's Buffer(TimeSpan, count) has no way to flush its current (incomplete) window on
+    // unsubscribe, so a graceful shutdown mid-window used to drop whatever had accumulated since
+    // the last tick - up to 5s/250 shares - without even routing them through the recovery-file
+    // fallback. Accumulating explicitly lets ExecuteAsync's finally block flush on the way out.
+    private readonly List<Share> pendingShares = new();
+    private readonly SemaphoreSlim flushLock = new(1, 1);
+    private const int MaxBufferSize = 250;
+    private static readonly TimeSpan BufferWindow = TimeSpan.FromSeconds(5);
+
+    private void OnShareReceived(Share share)
+    {
+        bool shouldFlush;
+
+        lock(pendingShares)
+        {
+            pendingShares.Add(share);
+            shouldFlush = pendingShares.Count >= MaxBufferSize;
+        }
+
+        if(shouldFlush)
+            _ = FlushPendingSharesAsync();
+    }
+
+    private async Task FlushPendingSharesAsync()
+    {
+        List<Share> batch;
+
+        lock(pendingShares)
+        {
+            if(pendingShares.Count == 0)
+                return;
+
+            batch = pendingShares.ToList();
+            pendingShares.Clear();
+        }
+
+        // serializes concurrent callers (a count-triggered flush racing the timer-triggered one),
+        // matching the single-at-a-time persistence the old Rx .Concat() guaranteed
+        await flushLock.WaitAsync();
+
+        try
+        {
+            await Guard(() => PersistSharesAsync(batch), ex => logger.Error(ex));
+        }
+
+        finally
+        {
+            flushLock.Release();
+        }
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken ct)
     {
         logger.Info(() => "Online");
 
-        return messageBus.Listen<Share>()
-            .ObserveOn(TaskPoolScheduler.Default)
+        using var subscription = messageBus.Listen<Share>()
             .Where(x => x != null)
-            .Select(x => x)
-            .Buffer(TimeSpan.FromSeconds(5), 250)
-            .Where(shares => shares.Any())
-            .Select(shares => Observable.FromAsync(() =>
-                Guard(() =>
-                        PersistSharesAsync(shares),
-                    ex => logger.Error(ex))))
-            .Concat()
-            .ToTask(ct)
-            .ContinueWith(task =>
+            .Subscribe(OnShareReceived);
+
+        try
+        {
+            while(!ct.IsCancellationRequested)
             {
-                if(task.IsFaulted)
-                    logger.Fatal(() => $"Terminated due to error {task.Exception?.InnerException ?? task.Exception}");
-                else
-                    logger.Info(() => "Offline");
-            }, ct);
+                try
+                {
+                    await Task.Delay(BufferWindow, ct);
+                }
+
+                catch(OperationCanceledException)
+                {
+                    break;
+                }
+
+                await FlushPendingSharesAsync();
+            }
+        }
+
+        catch(Exception ex)
+        {
+            logger.Fatal(ex, () => "Terminated due to error");
+            throw;
+        }
+
+        finally
+        {
+            // flush whatever accumulated since the last tick so a graceful shutdown doesn't drop shares
+            await FlushPendingSharesAsync();
+            logger.Info(() => "Offline");
+        }
     }
 }
