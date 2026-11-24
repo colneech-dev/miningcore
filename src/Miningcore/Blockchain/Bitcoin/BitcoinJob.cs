@@ -460,17 +460,42 @@ public class BitcoinJob
         return reward;
     }
 
-    protected bool RegisterSubmit(string extraNonce1, string extraNonce2, string nTime, string nonce, string versionBits = null)
+    // Key must be built from parsed/normalised values, not the raw submitted strings: leading
+    // zeros, a stripped "0x" prefix, or version bits outside the negotiated mask all parse to
+    // the same header but would otherwise alias to a different dictionary key, letting a miner
+    // replay one valid share for unlimited credit. extraNonce2Int/nTimeInt/nonceInt are the
+    // already-parsed values, and effectiveVersionBits is the masked value SerializeHeader
+    // actually mixes into the block version - not the raw versionBits string.
+    // extraNonce2Normalized must already be validated (strict hex, exact expected length) and
+    // lower-cased by the caller - see ProcessShare.
+    protected bool RegisterSubmit(string extraNonce1, string extraNonce2Normalized, uint nTimeInt, uint nonceInt, uint effectiveVersionBits)
     {
         var key = new StringBuilder()
             .Append(extraNonce1)
-            .Append(extraNonce2)
-            .Append(nTime)
-            .Append(nonce)
-            .Append(versionBits ?? string.Empty)
+            .Append(extraNonce2Normalized)
+            .Append(nTimeInt.ToString("x8"))
+            .Append(nonceInt.ToString("x8"))
+            .Append(effectiveVersionBits.ToString("x8"))
             .ToString();
 
         return submissions.TryAdd(key, true);
+    }
+
+    // Rejects anything HexToByteArray would silently tolerate (a "0x" prefix, non-hex
+    // characters, an odd length that drops the last nibble) so a miner can't submit two
+    // different-looking strings that decode to the same bytes.
+    private static bool IsStrictHex(string s)
+    {
+        if(string.IsNullOrEmpty(s) || (s.Length & 1) != 0)
+            return false;
+
+        foreach(var c in s)
+        {
+            if(!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))
+                return false;
+        }
+
+        return true;
     }
 
     private uint GetVersionRollingMask(uint? versionMask = null)
@@ -1328,8 +1353,18 @@ public class BitcoinJob
 
         var context = worker.ContextAs<BitcoinWorkerContext>();
 
+        // validate extraNonce2: must be strict hex (no "0x" prefix, no stray characters) of
+        // exactly the length this worker was told to use, or different-looking submissions for
+        // the same bytes (padding, case, a dropped odd trailing char) would alias to the same
+        // header while bypassing the duplicate-share key below
+        var expectedExtraNonce2HexLen = (extraNoncePlaceHolderLength - context.ExtraNonce1.Length / 2) * 2;
+        if(extraNonce2.Length != expectedExtraNonce2HexLen || !IsStrictHex(extraNonce2))
+            throw new StratumException(StratumError.Other, "incorrect size of extranonce2");
+
+        var extraNonce2Normalized = extraNonce2.ToLowerInvariant();
+
         // validate nTime
-        if(nTime.Length != 8)
+        if(nTime.Length != 8 || !IsStrictHex(nTime))
             throw new StratumException(StratumError.Other, "incorrect size of ntime");
 
         var nTimeInt = uint.Parse(nTime, NumberStyles.HexNumber);
@@ -1337,7 +1372,7 @@ public class BitcoinJob
             throw new StratumException(StratumError.Other, "ntime out of range");
 
         // validate nonce
-        if(nonce.Length != 8)
+        if(nonce.Length != 8 || !IsStrictHex(nonce))
             throw new StratumException(StratumError.Other, "incorrect size of nonce");
 
         var nonceInt = uint.Parse(nonce, NumberStyles.HexNumber);
@@ -1347,6 +1382,9 @@ public class BitcoinJob
 
         if(versionBits != null)
         {
+            if(versionBits.Length != 8 || !IsStrictHex(versionBits))
+                throw new StratumException(StratumError.Other, "incorrect size of versionbits");
+
             versionBitsInt = uint.Parse(versionBits, NumberStyles.HexNumber);
 
             // Only enforce mask constraint when version rolling was formally negotiated
@@ -1354,8 +1392,13 @@ public class BitcoinJob
                 throw new StratumException(StratumError.Other, "rolling-version mask violation");
         }
 
-        // dupe check — include versionBits so AsicBoost miners can submit same nonce with different version bits
-        if(!RegisterSubmit(context.ExtraNonce1, extraNonce2, nTime, nonce, versionBits))
+        // dupe check. Use the masked version bits actually applied to the header (see
+        // SerializeHeader) rather than the raw versionBits string, so bits outside the mask -
+        // which have no effect on the header - can't be used to alias a new key for the same share.
+        var mask = context.VersionRollingMask ?? GetVersionRollingMask();
+        var effectiveVersionBits = versionBitsInt & mask;
+
+        if(!RegisterSubmit(context.ExtraNonce1, extraNonce2Normalized, nTimeInt, nonceInt, effectiveVersionBits))
             throw new StratumException(StratumError.DuplicateShare, "duplicate share");
 
         var (share, blockHex, auxCandidates) = ProcessShareInternal(worker, extraNonce2, nTimeInt, nonceInt, versionBitsInt);
