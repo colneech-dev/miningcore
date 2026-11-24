@@ -24,7 +24,10 @@ public class IPAccessWhitelistMiddleware
 
     public async Task Invoke(HttpContext context)
     {
-        if(locations.Any(x => context.Request.Path.Value.StartsWith(x)))
+        // ASP.NET Core attribute routing is case-insensitive, so "/API/admin/..." reaches the
+        // controller even though a case-sensitive StartsWith here would not match it against
+        // the "/api/admin" prefix below - letting a request bypass the whitelist entirely.
+        if(locations.Any(x => context.Request.Path.Value.StartsWith(x, StringComparison.OrdinalIgnoreCase)))
         {
             var remoteAddress = context.Connection.RemoteIpAddress;
             if(!whitelist.Any(x => x.Equals(remoteAddress)))

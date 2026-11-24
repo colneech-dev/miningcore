@@ -84,6 +84,16 @@ public class ShareRecorder : BackgroundService
 
     private async Task PersistSharesCoreAsync(IList<Share> shares)
     {
+        // Worker name and user agent are miner-supplied and unvalidated. A NUL character (or
+        // any other control character) makes Postgres reject the whole batch - shares AND any
+        // block candidate in it, across every pool - since they share one transaction below.
+        // Sanitize once here rather than at every call site across every coin family.
+        foreach(var share in shares)
+        {
+            share.Worker = share.Worker?.SanitizeForStorage(64);
+            share.UserAgent = share.UserAgent?.SanitizeForStorage(256);
+        }
+
         await cf.RunTx(async (con, tx) =>
         {
             // Insert shares

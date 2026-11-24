@@ -71,7 +71,9 @@ public class BitcoinJobManager : BitcoinJobManagerBase<BitcoinJob>
     // Every Bitcoin-derived chain shares Bitcoin's difficulty-1 target, so for them, and for RSK and
     // Hathor which have no comparable native scale, parent and aux units coincide.
     private BigInteger parentDiff1 = BitcoinConstants.Diff1;
-    private readonly Dictionary<string, BigInteger> auxDiff1 = new();
+    // Written from concurrent aux-submit tasks (ProcessAuxSubmissionsAsync runs up to 8 chains
+    // in parallel), so a plain Dictionary's first-write-per-key race could corrupt it.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, BigInteger> auxDiff1 = new();
 
     private BigInteger AuxDiff1(AuxChainConfig config)
     {

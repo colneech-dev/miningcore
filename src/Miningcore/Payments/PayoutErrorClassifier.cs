@@ -46,7 +46,21 @@ public static class PayoutErrorClassifier
         if(error.Code == -500)
             return !IsConnectionNeverEstablished(error.InnerException);
 
-        return error.Code is RpcVerifyError or RpcVerifyRejected or RpcVerifyAlreadyInChain;
+        if(error.Code is RpcVerifyError or RpcVerifyRejected or RpcVerifyAlreadyInChain)
+            return true;
+
+        // Bitcoin 0.10-0.13-derived wallets (several supported legacy daemons) call
+        // AddToWallet before AcceptToMemoryPool in CommitTransaction. If the mempool then
+        // rejects the transaction, sendmany/sendtoaddress raises -4 "Transaction commit
+        // failed" - but the transaction is already recorded in the wallet and may still be
+        // relayed later (ResendWalletTransactions keeps retrying it). Treating this as "nothing
+        // sent" risks paying the same balances again from different inputs while the first
+        // transaction is still live.
+        if(error.Code == RpcWalletError &&
+           error.Message?.Contains("commit failed", StringComparison.OrdinalIgnoreCase) == true)
+            return true;
+
+        return false;
     }
 
     /// <summary>Connection refused, unknown host or unreachable network: the request never reached the daemon.</summary>

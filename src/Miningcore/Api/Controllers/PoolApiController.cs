@@ -829,8 +829,13 @@ public class PoolApiController : ApiControllerBase
         if(request?.Settings == null)
             throw new ApiException("Invalid or missing settings", HttpStatusCode.BadRequest);
 
-        if(!IPAddress.TryParse(request.IpAddress, out var requestIp))
-            throw new ApiException("Invalid IP address", HttpStatusCode.BadRequest);
+        // Proof of ownership is "this caller's IP recently mined as this address". The caller's
+        // real remote IP must be used - trusting an IP the client supplies in the body lets
+        // anyone who knows or guesses a miner's IP (or simply mines for a minute under the
+        // victim's address themselves) take over that miner's settings.
+        var requestIp = HttpContext.Connection.RemoteIpAddress;
+        if(requestIp == null)
+            throw new ApiException("Unable to determine caller IP address", HttpStatusCode.BadRequest);
 
         // fetch recent IPs
         var ips = await cf.Run(con => shareRepo.GetRecentyUsedIpAddressesAsync(con, null, poolId, address, ct));
@@ -846,9 +851,15 @@ public class PoolApiController : ApiControllerBase
         // map settings
         var mapped = mapper.ToModel(request.Settings);
 
-        // clamp limit
+        // clamp limit - both below (can't be set lower than the pool's own minimum) and above.
+        // With no upper clamp, anyone who could reach this endpoint for a given address (which
+        // used to include anyone who merely knew its IP) could set a threshold so high the
+        // miner is effectively never paid.
         if(pool.PaymentProcessing != null)
+        {
             mapped.PaymentThreshold = Math.Max(mapped.PaymentThreshold, pool.PaymentProcessing.MinimumPayment);
+            mapped.PaymentThreshold = Math.Min(mapped.PaymentThreshold, pool.PaymentProcessing.MinimumPayment * 10000);
+        }
 
         mapped.PoolId = pool.Id;
         mapped.Address = address;

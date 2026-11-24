@@ -200,6 +200,14 @@ public class RpcClient
             var json = JsonConvert.SerializeObject(rpcRequest, serializerSettings);
             request.Content = new StringContent(json, Encoding.UTF8, "application/json");
 
+            // Trace logging writes the raw request including its params. For
+            // walletpassphrase that's the wallet's passphrase in cleartext, and the log level
+            // can be raised to Trace at runtime via the admin API - so logging it unconditionally
+            // would put the passphrase on disk for anyone who can reach that endpoint.
+            var traceJson = string.Equals(method, "walletpassphrase", StringComparison.OrdinalIgnoreCase)
+                ? "<redacted: walletpassphrase>"
+                : json;
+
             // auth header
             if(!string.IsNullOrEmpty(endPoint.User))
             {
@@ -207,7 +215,7 @@ public class RpcClient
                 request.Headers.Authorization = new AuthenticationHeaderValue("Basic", auth.ToByteArrayBase64());
             }
 
-            logger.Trace(() => $"Sending RPC request to {requestUrl}: {json}");
+            logger.Trace(() => $"Sending RPC request to {requestUrl}: {traceJson}");
 
             // send request
             using(var response = await httpClient.SendAsync(request, ct))
@@ -258,6 +266,11 @@ public class RpcClient
             var json = JsonConvert.SerializeObject(rpcRequests, serializerSettings);
             request.Content = new StringContent(json, Encoding.UTF8, "application/json");
 
+            // See the walletpassphrase redaction note in the single-request method above.
+            var traceJson = batch.Any(x => string.Equals(x.Method, "walletpassphrase", StringComparison.OrdinalIgnoreCase))
+                ? "<redacted: walletpassphrase>"
+                : json;
+
             // auth header
             if(!string.IsNullOrEmpty(endPoint.User))
             {
@@ -265,7 +278,7 @@ public class RpcClient
                 request.Headers.Authorization = new AuthenticationHeaderValue("Basic", auth.ToByteArrayBase64());
             }
 
-            logger.Trace(() => $"Sending RPC request to {requestUrl}: {json}");
+            logger.Trace(() => $"Sending RPC request to {requestUrl}: {traceJson}");
 
             // send request
             using(var response = await httpClient.SendAsync(request, ct))

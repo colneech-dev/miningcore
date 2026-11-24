@@ -291,11 +291,22 @@ public abstract class BitcoinJobManagerBase<TJob> : JobManagerBase<TJob>
 
         var results = await rpc.ExecuteBatchAsync(logger, ct, batch);
 
-        // did submission succeed?
+        // did submission succeed? submitblock/BIP22-submit return null on success. A non-null
+        // response string is usually a rejection reason, but BIP22 also defines "duplicate",
+        // "duplicate-inconclusive" and "inconclusive" for a block that is already known, or
+        // valid but not (yet) connected to the active chain - none of those mean the block was
+        // rejected, so they fall through to the getblock-based accepted check below instead of
+        // being treated as a hard failure here.
         var submitResult = results[0];
+        var submitResponseText = submitResult.Error == null ? submitResult.Response?.ToString() : null;
+        var isBenignSubmitResponse = string.IsNullOrEmpty(submitResponseText) ||
+            submitResponseText.Equals("duplicate", StringComparison.OrdinalIgnoreCase) ||
+            submitResponseText.Equals("duplicate-inconclusive", StringComparison.OrdinalIgnoreCase) ||
+            submitResponseText.Equals("inconclusive", StringComparison.OrdinalIgnoreCase);
+
         var submitError = submitResult.Error?.Message ??
             submitResult.Error?.Code.ToString(CultureInfo.InvariantCulture) ??
-            submitResult.Response?.ToString();
+            (!isBenignSubmitResponse ? submitResponseText : null);
 
         if(!string.IsNullOrEmpty(submitError))
         {
@@ -531,8 +542,16 @@ public abstract class BitcoinJobManagerBase<TJob> : JobManagerBase<TJob>
 
         isPoS = poolConfig.Template is BitcoinTemplate {IsPseudoPoS: true} ||
             (difficultyResponse.Values().Any(x => x.Path == "proof-of-stake" && !difficultyResponse.Values().Any(x => x.Path == "proof-of-work")));
-        
+
         forcePoolAddressDestinationWithPubKey = poolConfig.Template is BitcoinTemplate {ForcePoolAddressDestinationWithPubKey: true};
+
+        // All pool addresses must be P2PKH: a P2SH pool address silently becomes an
+        // unspendable coinbase output (AddressToDestination's Base58Check fallback decodes a
+        // script hash as if it were a pubkey hash) or a daemon-rejected block
+        // ("bad-cb-payee") on altcoins where NBitcoin doesn't recognise the network. Fail
+        // startup loudly instead of mining blocks nobody can ever spend.
+        if(!isPoS && !forcePoolAddressDestinationWithPubKey && validateAddressResponse.IsScript)
+            throw new PoolStartupException($"Pool-address '{poolConfig.Address}' is a script (P2SH) address - pool addresses must be P2PKH", poolConfig.Id);
 
         // Create pool address script from response
         if(!isPoS && !forcePoolAddressDestinationWithPubKey)

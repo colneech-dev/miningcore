@@ -186,6 +186,14 @@ public class PoolConfigValidator : AbstractValidator<PoolConfig>
             .NotEmpty()
             .WithMessage("Pool: Daemons missing or empty");
 
+        // If reward-recipient percentages add up to more than 100, PayoutHandlerBase's
+        // blockRewardRemaining goes negative and recipients are credited more than the block
+        // actually paid - the overpayment comes out of the wallet's float. A typo like "0.01"
+        // intended as 0.01% but misread as a fraction is otherwise undetected until payout.
+        RuleFor(j => j.RewardRecipients)
+            .Must(recipients => recipients == null || recipients.Sum(r => r.Percentage) <= 100)
+            .WithMessage("Pool: RewardRecipients percentages add up to more than 100");
+
         RuleForEach(j => j.Daemons)
             .SetValidator(new AuthenticatedNetworkEndpointConfigValidator<DaemonEndpointConfig>());
 

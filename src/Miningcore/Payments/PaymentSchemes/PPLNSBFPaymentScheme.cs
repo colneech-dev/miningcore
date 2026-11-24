@@ -201,6 +201,12 @@ public class PPLNSBFPaymentScheme : IPayoutScheme
                 else
                     shares[address] += shareDiffAdjusted;
 
+                // See PPLNSPaymentScheme for why this guard exists: NetworkDifficulty == 0
+                // divides to +Infinity, and casting that to decimal throws OverflowException,
+                // aborting every other block queued in the same UpdatePoolBalancesAsync pass.
+                if(share.NetworkDifficulty <= 0)
+                    continue;
+
                 var score = (decimal) (shareDiffAdjusted / share.NetworkDifficulty);
 
                 // if accumulated score would cross threshold, cap it to the remaining value
