@@ -132,17 +132,31 @@ public class BeamPayoutHandler : PayoutHandlerBase,
             Offline = IsOffline
         };
         
+        // record the intent before anything leaves the wallet (idempotent payouts, see PayoutHandlerBase)
+        var trackingBatch = await BeginPayoutBatchAsync(new[] { balance });
+
         // send command
-        var response = await rpcClientWallet.ExecuteAsync<SendTransactionResponse>(logger, BeamWalletCommands.SendTransaction, ct, request);
-        
+        var response = await rpcClientWallet.ExecuteAsync<SendTransactionResponse>(logger, BeamWalletCommands.SendTransaction, ct, request, timeout: SendTimeout);
+
         if(response.Error != null)
-            throw new Exception($"{BeamWalletCommands.SendTransaction} returned error: {response.Error.Message} code {response.Error.Code}");
-        
+        {
+            var error = $"{BeamWalletCommands.SendTransaction} returned error: {response.Error.Message} code {response.Error.Code}";
+
+            // a transport failure leaves the outcome unknown - the wallet may still have relayed the
+            // transaction - so the batch stays pending rather than being marked failed
+            if(IsOutcomeUnknown(response.Error))
+                logger.Error(() => $"[{LogCategory}] {error}; the transaction may have been broadcast. Payout batch {trackingBatch.Id} stays pending and payouts are halted until it is resolved");
+            else
+                await MarkPayoutBatchFailedAsync(trackingBatch, error);
+
+            throw new Exception(error);
+        }
+
         var txHash = response.Response.TxId;
         logger.Info(() => $"[{LogCategory}] Payment transaction id: {txHash}");
 
-        // update db
-        await PersistPaymentsAsync(new[] { balance }, txHash);
+        // marks the batch sent, then persists payments and balances; recoverable at every step
+        await CompletePayoutBatchAsync(trackingBatch, txHash);
 
         // done
         return txHash;

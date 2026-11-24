@@ -609,19 +609,6 @@ public class AlephiumPayoutHandler : PayoutHandlerBase,
                         Signature = txSign.Signature,
                     };
 
-                    var txSubmit = await Guard(() => alephiumClient.PostTransactionsSubmitAsync(submitTxSign, ct), ex =>
-                    {
-                        logger.Warn(() => $"[{LogCategory}] Submit signed transaction failed");
-                    });
-                    if(string.IsNullOrEmpty(txSubmit?.TxId))
-                    {
-                        logger.Warn(() => $"[{LogCategory}] Payment transaction failed to return a transaction id");
-                        continue;
-                    }
-
-                    // payment successful
-                    logger.Info(() => $"[{LogCategory}] Payment transaction id: {txSubmit.TxId}");
-
                     successBalances = groupingAmounts[j]
                         .Select(x => new Balance
                         {
@@ -631,7 +618,28 @@ public class AlephiumPayoutHandler : PayoutHandlerBase,
                         })
                         .ToArray();
 
-                    await PersistPaymentsAsync(successBalances, txSubmit.TxId);
+                    // record the intent before anything leaves the wallet (idempotent payouts, see
+                    // PayoutHandlerBase); build and sign above don't move funds, only submit does
+                    var trackingBatch = await BeginPayoutBatchAsync(successBalances);
+
+                    var txSubmit = await Guard(() => alephiumClient.PostTransactionsSubmitAsync(submitTxSign, ct), ex =>
+                    {
+                        logger.Warn(() => $"[{LogCategory}] Submit signed transaction failed");
+                    });
+                    if(string.IsNullOrEmpty(txSubmit?.TxId))
+                    {
+                        // a timeout or transport error here does not prove the transaction wasn't broadcast
+                        // (it was already built, signed and submitted to the API), so the batch stays pending
+                        // and payouts for this pool halt until an operator resolves it
+                        logger.Warn(() => $"[{LogCategory}] Payment transaction failed to return a transaction id; payout batch {trackingBatch.Id} stays pending until it is resolved");
+                        continue;
+                    }
+
+                    // payment successful
+                    logger.Info(() => $"[{LogCategory}] Payment transaction id: {txSubmit.TxId}");
+
+                    // marks the batch sent, then persists payments and balances; recoverable at every step
+                    await CompletePayoutBatchAsync(trackingBatch, txSubmit.TxId);
 
                     NotifyPayoutSuccess(poolConfig.Id, successBalances, new[] {txSubmit.TxId}, ((estimatedGasAmount * AlephiumConstants.DefaultGasPrice) / AlephiumConstants.SmallestUnit));
                 }

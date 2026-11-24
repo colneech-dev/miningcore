@@ -394,23 +394,47 @@ public class WarthogPayoutHandler : PayoutHandlerBase,
                     Signature = fullSignatureBytes.ToHexString()
                 };
 
-                var response = await restClient.Post<WarthogSendTransactionResponse>(WarthogCommands.SendTransaction, sendTransaction, ct);
+                var payoutBalance = new Balance { PoolId = poolConfig.Id, Address = address, Amount = amount };
+
+                // record the intent before anything leaves the wallet (idempotent payouts, see PayoutHandlerBase)
+                var trackingBatch = await BeginPayoutBatchAsync(new[] { payoutBalance });
+
+                WarthogSendTransactionResponse response;
+
+                try
+                {
+                    response = await restClient.Post<WarthogSendTransactionResponse>(WarthogCommands.SendTransaction, sendTransaction, ct);
+                }
+
+                catch(Exception ex)
+                {
+                    // a transport failure or timeout here does not prove the transaction wasn't accepted, so the
+                    // batch stays pending and payouts for this pool halt until an operator resolves it
+                    logger.Error(() => $"[{LogCategory}] [{nonceId}] {WarthogCommands.SendTransaction} failed: {ex.Message}; payout batch {trackingBatch.Id} stays pending and payouts are halted until it is resolved");
+                    throw;
+                }
+
                 if(response?.Error != null)
-                    throw new Exception($"[{nonceId}] {WarthogCommands.SendTransaction} returned error: {response.Error} (Code {response?.Code})");
+                {
+                    var error = $"[{nonceId}] {WarthogCommands.SendTransaction} returned error: {response.Error} (Code {response?.Code})";
+                    await MarkPayoutBatchFailedAsync(trackingBatch, error);
+                    throw new Exception(error);
+                }
 
                 if(string.IsNullOrEmpty(response.Data.TxHash))
+                {
+                    logger.Error(() => $"[{LogCategory}] [{nonceId}] {WarthogCommands.SendTransaction} did not return a transaction id; payout batch {trackingBatch.Id} stays pending until it is resolved");
                     throw new Exception($"[{nonceId}] {WarthogCommands.SendTransaction} did not return a transaction id!");
+                }
                 else
                     logger.Info(() => $"[{LogCategory}] [{nonceId}] Payment transaction id: {response.Data.TxHash}");
 
+                // marks the batch sent, then persists payments and balances; recoverable at every step
+                await CompletePayoutBatchAsync(trackingBatch, response.Data.TxHash);
+
                 lock(resultsLock)
                 {
-                    successBalances.Add(new Balance
-                    {
-                        PoolId = poolConfig.Id,
-                        Address = address,
-                        Amount = amount,
-                    }, response.Data.TxHash);
+                    successBalances.Add(payoutBalance, response.Data.TxHash);
                 }
             }, ex =>
             {
@@ -421,8 +445,7 @@ public class WarthogPayoutHandler : PayoutHandlerBase,
 
         if(successBalances.Any())
         {
-            await PersistPaymentsAsync(successBalances);
-
+            // payments were already persisted per-transfer by CompletePayoutBatchAsync above
             NotifyPayoutSuccess(poolConfig.Id, successBalances.Keys.ToArray(), successBalances.Values.ToArray(), null);
         }
 

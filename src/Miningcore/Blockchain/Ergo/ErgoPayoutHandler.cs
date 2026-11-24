@@ -303,6 +303,7 @@ public class ErgoPayoutHandler : PayoutHandlerBase,
             return;
 
         var balancesTotal = amounts.Sum(x => x.Value);
+        Persistence.Model.PayoutBatch trackingBatch = null;
 
         try
         {
@@ -348,6 +349,11 @@ public class ErgoPayoutHandler : PayoutHandlerBase,
                 Value = (long) (x.Value * ErgoConstants.SmallestUnit),
             }).ToArray();
 
+            // record the intent before anything leaves the wallet (idempotent payouts, see PayoutHandlerBase).
+            // Left unresolved (pending) if an exception other than PaymentException escapes below - a transport
+            // failure or timeout here does not prove the transaction wasn't generated and sent server-side.
+            trackingBatch = await BeginPayoutBatchAsync(balances);
+
             var txId = await Guard(()=> ergoClient.WalletPaymentTransactionGenerateAndSendAsync(requests, ct), ex =>
             {
                 if(ex is ApiException<ApiError> apiException)
@@ -370,7 +376,8 @@ public class ErgoPayoutHandler : PayoutHandlerBase,
             // payment successful
             logger.Info(() => $"[{LogCategory}] Payment transaction id: {txId}");
 
-            await PersistPaymentsAsync(balances, txId);
+            // marks the batch sent, then persists payments and balances; recoverable at every step
+            await CompletePayoutBatchAsync(trackingBatch, txId);
 
             NotifyPayoutSuccess(poolConfig.Id, balances, new[] {txId}, null);
         }
@@ -378,6 +385,11 @@ public class ErgoPayoutHandler : PayoutHandlerBase,
         catch(PaymentException ex)
         {
             logger.Error(() => $"[{LogCategory}] {ex.Message}");
+
+            // the daemon explicitly rejected the request (bad wallet state, invalid address, etc.) before
+            // generating anything, or never returned a transaction id - nothing was sent
+            if(trackingBatch != null)
+                await MarkPayoutBatchFailedAsync(trackingBatch, ex.Message);
 
             NotifyPayoutFailure(poolConfig.Id, balances, ex.Message, null);
         }
